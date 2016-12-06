@@ -2,23 +2,23 @@
 ##### this is for miseq 13, containing both a crispr and ss2 plate
 ######################################################################
 
+#also need system libraries: libssl. libcurl?
+installdeps <- function(){
+  install.packages(c("gplots","scatterplot3d","plotrix","sqldf","Matrix"))
+  source("https://bioconductor.org/biocLite.R")
+  biocLite(c("biomaRt","DESeq","DEseq2"))
+}
 
-install.packages(c("gplots","scatterplot3d","org.Mm.eg.db","GO.db","plotrix"))
-source("https://bioconductor.org/biocLite.R")
-biocLite("biomaRt")
-
-
-library("pheatmap")
-library("DESeq2")
-library(DESeq)
+library(pheatmap)
+library(DESeq2)
+library(DESeq) #really need both?
 library(plyr)
 library(biomaRt)
 library(gplots)
 library(scatterplot3d)
-#library(org.Mm.eg.db)
-#library(GO.db)
 library(plotrix)
 library(Matrix)
+library(sqldf)
 
 ######################################################################
 ### Load data ########################################################
@@ -58,11 +58,11 @@ getplatedesign <- function(){
   therows <- as.double(sapply(1:8,function(i) rep(i,12)))
   therows <- c(therows,therows)
   theplate <- as.double(sapply(1:2,function(i) rep(i,96)))
-  iswt  <-thecols<12 & therows %in% c(1,2)
-  level1<-therows %in% c(3,4)
-  level2<-therows %in% c(5,6)
-  level3<-therows %in% c(7,8)
-  levelnum <- iswt*1 + level1*2 + level2*3 + level3*4
+  level1<-thecols<12 & therows %in% c(1,2)
+  level2<-therows %in% c(3,4)
+  level3<-therows %in% c(5,6)
+  level4<-therows %in% c(7,8)
+  levelnum <- level1*1 + level2*2 + level3*3 + level4*4
   isgood <- levelnum>0
   cellcondition <- data.frame(
     col = thecols,
@@ -70,7 +70,7 @@ getplatedesign <- function(){
     plate = theplate,
     iscr = (1:192)<=96,
     isss = (1:192)>96,
-    iswt=iswt, level1=level1, level2=level2, level3=level3,
+    level1=level1, level2=level2, level3=level3, level4=level4,
     levelnum=levelnum,
     isgood=isgood
   )
@@ -87,8 +87,29 @@ mt_genes <- ensembl_genes[which(ensembl_genes$gene_biotype=="Mt_rRNA" | ensembl_
 
 ensconvert <- as.data.frame(getBM(attributes=c('ensembl_gene_id', 'mgi_symbol'), mart=ensembl),stringsAsFactors=FALSE)
 togenesym <- function(ensid){
-  ensconvert$mgi_symbol[which(ensconvert$ensembl_gene_id %in% ensid)]
+  out <- c()#terrible speed...
+  for(n in ensid){
+    ids <- which(ensconvert$ensembl_gene_id==n)
+    if(length(ids)==0)
+      more <- n
+    else
+      more <- ensconvert$mgi_symbol[ids]
+    out <- c(out, more)    
+  }
+  #ensconvert$mgi_symbol[which(ensconvert$ensembl_gene_id %in% ensid)]
+  out
 }
+
+toensid <- function(geneid){
+  out <- c()#terrible speed...
+  for(n in geneid){
+    out <- c(out, ensconvert$ensembl_gene_id[which(ensconvert$mgi_symbol==n)])    
+  }
+  out
+}
+
+
+ensidPtma <- ensconvert$ensembl_gene_id[which(ensconvert$mgi_symbol=="Ptma")]
 
 ######################################################################
 ### QC for cells #####################################################
@@ -148,6 +169,8 @@ mynormalize <- function(dat){
   dat
 }
 ncount_all <- mynormalize(dat)
+log_ncount_all <- log(1+ncount_all)
+
 
 ### Comparing average gene expression among conditions
 
@@ -203,7 +226,7 @@ plot(pca$x[,1], pca$x[,2], pch=20, col=colorbylevel()[takecells], xlab="PC1", yl
 ### DEseq model testing ##############################################
 ######################################################################
 
-# Only use normal genes, raw counts
+# Only use normal genes, raw counts. no grna or cas9 levels
 datfordeseq  <- dat[grep("ENSMUSG",rownames(dat)),]
 
 #compute average cas9 and ptma levels for each condition
@@ -252,10 +275,9 @@ cellconditiongrna <- calcrnacondition()
 
 ############ Simplest model, just lowest infected cells vs highest infected cells
 
-keepcells <- cellcondition$isss & cellcondition$levelnum%in%c(2,4)
+keepcells <- cellcondition$isss & cellcondition$levelnum%in%c(1,4)
 cellcond <- data.frame(levelnum=factor(cellconditiongrna[keepcells,colnames(cellconditiongrna) %in% c("levelnum")]))
-dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells],
-                              colData = cellcond,
+dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells], colData = cellcond,
                               design = ~ levelnum) #and plate? es cell type?
 dds <- dds[ rowSums(counts(dds)) > 1, ]
 #dds$condition <- relevel(dds$condition, ref="1")   #set the reference level to be all 0?
@@ -264,13 +286,15 @@ res <- results(dds)
 
 resOrdered <- res[order(res$padj),]
 resOrdered
-#resOrdered[1:5,]
 togenesym(rownames(resOrdered)[1:5])
 #which(resOrdered$padj>0.9997)
 #for first miseq, ss plate only
 #1 vs 4: "Ptma"   "Malat1" "Rab25"  "Nr5a2"  "Gnai3" 
 #1 vs 3: "Narf"  "Scmh1" "Cdc45" "Gnai3" "Klf6" 
 #2 vs 4: "Narf"    "Slc34a2" "Cdc45"   "H19"     "Gnai3"  
+### why is fgf4 not coming out????
+#Narf,Cdc45??
+
 
 
 ############ Model using average levels for each infection group
@@ -280,7 +304,6 @@ dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells],
                               colData = cellconditiongrna[keepcells,],
                               design = ~ meancas9 + meanptma) #and plate? es cell type?
 dds <- dds[ rowSums(counts(dds)) > 1, ]
-#dds$condition <- relevel(dds$condition, ref="1")   #set the reference level to be all 0?
 dds <- DESeq(dds)
 res <- results(dds)
 
@@ -298,33 +321,17 @@ pheatmap(log2.norm.counts, cluster_rows=FALSE, show_rownames=FALSE,
 
 ############ Bigger model, trying to use gRNA levels as contrasts
 
-#### todo: do not use the dat with grna levels
-### todo: 
 keepcells <- cellcondition$isss
 cellcond <- cellconditiongrna[keepcells,colnames(cellconditiongrna) %in% c("cas9",sprintf("ptma%s",1:5))]
 rankMatrix(cellcond)
-dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells],
-                              colData = cellcond,
+dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells],colData = cellcond,
                               design = ~ cas9 + ptma1 + ptma2 + ptma3 + ptma4 + ptma5) #and plate? es cell type?
-#what about average level as a proxy to deal with noisyness?
-
 dds <- dds[ rowSums(counts(dds)) > 1, ]  #suggested prefilter
-
-dds$condition <- relevel(dds$condition, ref="untreated")   #set the reference level to be all 0?
-
+#dds$condition <- relevel(dds$condition, ref="untreated")   #set the reference level to be all 0?
 dds <- DESeq(dds)
 res <- results(dds)
-
 resOrdered <- res[order(res$padj),]
 
-
-
-select <- order(rowMeans(counts(dds,normalized=TRUE)), decreasing=TRUE)[1:20]
-nt <- normTransform(dds) # defaults to log2(x+1)
-log2.norm.counts <- assay(nt)[select,]
-df <- as.data.frame(colData(dds)[,c("condition","type")])
-pheatmap(log2.norm.counts, cluster_rows=FALSE, show_rownames=FALSE,
-         cluster_cols=FALSE, annotation_col=df)
 
 
 
@@ -334,4 +341,100 @@ pheatmap(log2.norm.counts, cluster_rows=FALSE, show_rownames=FALSE,
 ### Comparison with olas previous data ###############################
 ######################################################################
 
+### Read olas gene lists
+#ola figure 7d. genes repressed by PTMA
+listolaptmagenes7d <- c("Vcan","Dst","Peg10","Parp12","Egr1","Nqo1","Sfrp1","Clptm1l","Ptp4a3","Psme3","Tcf3","Ung","Tomm70a","Eif2b5","Ywhah","Fgf4")
+listolaptmagenes7d <- data.frame(
+  genesym=listolaptmagenes7d, 
+  ensid=rep("",length(listolaptmagenes7d)),stringsAsFactors=FALSE)
+for(i in 1:nrow(listolaptmagenes7d)){
+  listolaptmagenes7d$ensid[i] <- ensconvert$ensembl_gene_id[which(ensconvert$mgi_symbol==listolaptmagenes7d$genesym[i])]
+}
+colnames(listolaptmagenes7d) <- c("ensid","genesym")
+#ola pluri-pot genes, taken from literature
+listolapluripotency <- read.csv("ola_pluripotency_genes.csv",stringsAsFactors = FALSE)
+colnames(listolapluripotency) <- c("ensid","genesym")
+#also taken from literature I think
+listolacellcycle <- read.csv("ola_cell_cycle_fig_genenames.csv",sep="\t",stringsAsFactors = FALSE)
+colnames(listolacellcycle) <- c("ensid","genesym")
+listola2c <- read.csv("ola_2C_genes_subset.csv",sep="\t",stringsAsFactors = FALSE)[,c(1,2)]
+colnames(listola2c) <- c("ensid","genesym")
 
+
+### Average gene levels for cells instead of bulk
+# genemeanperlevel <- cbind(
+#   rowMeans(ncount_all[,cellcondition$level1]),
+#   rowMeans(ncount_all[,cellcondition$level2]),
+#   rowMeans(ncount_all[,cellcondition$level3]),
+#   rowMeans(ncount_all[,cellcondition$level4]))
+genemeanperlevel <- cbind(
+  rowMeans(log_ncount_all[,cellcondition$level1]),
+  rowMeans(log_ncount_all[,cellcondition$level2]),
+  rowMeans(log_ncount_all[,cellcondition$level3]),
+  rowMeans(log_ncount_all[,cellcondition$level4]))
+
+#### Redoing fig7d. What is down-regulated by PTMA?
+andid <- c(ensidPtma)#,toensid(c("Narf","Cdc45")))
+b <- t(genemeanperlevel[
+  rownames(genemeanperlevel) %in% c(listolaptmagenes7d$ensid,andid),
+  c(1,2,3,4)])
+#use order as in olas paper. ola sorts by fold change
+b<-b[,c(listolaptmagenes7d$ensid, andid)] 
+for(i in 1:ncol(b)) b[,i] <- b[,i]/max(b[,i]) #normalize to highest level
+colnames(b) <- togenesym(colnames(b)) #order preserving? not any more!
+par(cex.lab=0.2)
+barplot(b, main="PTMA downreg: wt vs high",
+        col=c("#000000","#880000","#AA0000","#FF0000"), cex.names=0.5,beside=TRUE) 
+#ptma goes down as it should
+#Ptp4a3 looks nice! and Dst and Peg10 and Parp12*. but peg10 & dst the opposite way before
+#Parp12 seems affected by NfkB or interferon in general. could be affeced by the transfection itself
+
+
+#Check some individual correlations
+log1 <- function(x) as.double(log(1+x))
+plot(log1(ncount_all[toensid("Ptp4a3"),]),
+     log1(ncount_all[ensidPtma,]),cex.lab=1)
+
+
+
+
+pheatmapbylevel <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
+
+  #selectgenes <- which(rownames(counts(dds)) %in% rownames(resOrdered)[1:10]))
+  #selectgenes <- order(rowMeans(counts(dds,normalized=TRUE)), decreasing=TRUE)[1:20]
+  #which(rownames(log_ncount_all)=="cas9")
+#  nt <- normTransform(dds) # defaults to log2(x+1)
+#  log2.norm.counts <- assay(nt)[selectgenes,]
+  lcounts <- log_ncount_all
+  selectgenes <- which(rownames(lcounts) %in% geneids)
+  lcounts <- lcounts[selectgenes,keepcells]
+  rownames(lcounts) <- togenesym(rownames(lcounts))
+  annotation_col <- data.frame(levelnum=factor(sprintf("level%s",cellcondition$levelnum)))  
+  #annotation_col
+  annotation_colors <- list(levelnum=c(
+    level1="#00FF00",level2="#000000",level3="#0000FF",level4="#AA0000"))
+  pheatmap(
+    #assay(dds)[select,],
+    lcounts, 
+    annotation_col=annotation_col,#gp = gpar(fill = "green")
+    annotation_colors=annotation_colors,
+    cluster_rows=TRUE, show_rownames=TRUE,
+    cluster_cols=TRUE, show_colnames=FALSE)
+  #todo: why is it not using the levels??
+  #library(grid) #might be needed?
+  #colnames(log2.norm.counts)
+}
+
+#  alsogenes <- c("Ptma")#sprintf("grna-ptma%s",1:5) #"cas9"
+#                         c(ensidPtma,listolaptmagenes7d$ensid,alsogenes))
+#"cas9"
+pheatmapbylevel(c(ensidPtma,listolaptmagenes7d$ensid),cellcondition$isss)
+
+pheatmapbylevel(c(ensidPtma,listolapluripotency$ensid),cellcondition$isss)
+pheatmapbylevel(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
+pheatmapbylevel(c(ensidPtma,listola2c$ensid),cellcondition$isss)
+#some really striking cells here for cell cycle!
+#listolapluripotency$ensid
+
+
+#what is a good way of keeping track of cell definitions?
