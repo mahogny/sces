@@ -400,11 +400,6 @@ plot(log1(ncount_all[toensid("Ptp4a3"),]),
 
 pheatmapbylevel <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
 
-  #selectgenes <- which(rownames(counts(dds)) %in% rownames(resOrdered)[1:10]))
-  #selectgenes <- order(rowMeans(counts(dds,normalized=TRUE)), decreasing=TRUE)[1:20]
-  #which(rownames(log_ncount_all)=="cas9")
-#  nt <- normTransform(dds) # defaults to log2(x+1)
-#  log2.norm.counts <- assay(nt)[selectgenes,]
   lcounts <- log_ncount_all
   selectgenes <- which(rownames(lcounts) %in% geneids)
   lcounts <- lcounts[selectgenes,keepcells]
@@ -438,3 +433,31 @@ pheatmapbylevel(c(ensidPtma,listola2c$ensid),cellcondition$isss)
 
 
 #what is a good way of keeping track of cell definitions?
+
+pheatmapcor <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
+  
+  lcounts <- log_ncount_all
+  selectgenes <- which(rownames(lcounts) %in% geneids)
+  lcounts <- lcounts[selectgenes,keepcells]
+  rownames(lcounts) <- togenesym(rownames(lcounts))
+  
+  thec <- cor(t(lcounts),method="spearman")
+  
+  #remove any N/A
+  for(i in 1:ncol(thec)){
+    ti <- is.na(thec[,i])
+    if(length(ti)>0)
+      thec[ti,i]  <-0
+  }
+  
+  pheatmap(
+    #assay(dds)[select,],
+    thec, 
+    cluster_rows=TRUE, show_rownames=TRUE,
+    cluster_cols=TRUE, show_colnames=TRUE)
+}
+pheatmapcor(c(ensidPtma,listolapluripotency$ensid),cellcondition$isss)
+pheatmapcor(c(ensidPtma,listolaptmagenes7d$ensid),cellcondition$isss)
+
+#Ptma is definitely not involved in cell cycle
+pheatmapcor(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
