@@ -193,6 +193,8 @@ abline(h=0.1, v=0.5, col="red", lty=2, lwd=2)
 
 #remove cells with too few reads (compare to mean for a plate instead?)
 plot(gene_count)
+plot(gene_count[cellcondition$plate %in% c(4,8,9,10)],ylim=c(0,200000))
+length(which(gene_count[cellcondition$plate %in% c(4,8,9,10)]>100e3))
 plot(gene_count[cellcondition$plate %in% c(1,2,3,4)])
 plot(gene_count[cellcondition$plate %in% c(5,6,7,8)])
 plot(gene_count[cellcondition$plate %in% c(6)])
