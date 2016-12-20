@@ -1,5 +1,5 @@
 ######################################################################
-##### this is for miseq 13, containing both a crispr and ss2 plate
+##### this is for the final 3 hiseq
 ######################################################################
 
 #also need system libraries: libssl. libcurl?
@@ -33,49 +33,75 @@ library(sqldf)
 listnongenes <- c("no_feature","ambiguous","too_low_aQual","not_aligned","alignment_not_unique","grna-numread")
 
 # read normal gene counts
-readcounttable <- function(){
-  dat <- read.csv("counts/rawm13.csv",stringsAsFactors=FALSE)
-  dim(dat)
+readcounttable20161209one <- function(f){
+  dat <- read.csv(f,stringsAsFactors=FALSE)
+  #dim(dat)
   rownames(dat) <- dat[,1]
   dat <- dat[,-1]
-  dat <- dat[-grep("grna",rownames(dat)),]
+  #  dat <- dat[-grep("grna",rownames(dat)),]
   rownames(dat)[which(rownames(dat)=="CAS9")] <- "cas9"
+  rownames(dat)[which(rownames(dat)=="grna-Ptma-F-1")] <- "grna-ptma1"
+  rownames(dat)[which(rownames(dat)=="grna-Ptma-F-2")] <- "grna-ptma2"
+  rownames(dat)[which(rownames(dat)=="grna-Ptma-F-3")] <- "grna-ptma3"
+  rownames(dat)[which(rownames(dat)=="grna-Ptma-F-4")] <- "grna-ptma4"
+  rownames(dat)[which(rownames(dat)=="grna-Ptma-F-5")] <- "grna-ptma5"
+  #rownames(dat)[grep("grna",rownames(dat))]
   
-  # read grna counts
-  dat2 <- read.csv("counts/rawgrnam13.csv",stringsAsFactors=FALSE)
-  dim(dat2)
-  rownames(dat2) <- dat2[,1]
-  dat2 <- dat2[,-1]
-  rownames(dat2) <- sprintf("grna-%s",rownames(dat2))  #rename all to avoid clashes... not sure if this is a good idea
-  colnames(dat2) <- colnames(dat)
-  #would be better if this was done on the cluster side and written into one single file
+  #there is the -F- in grna-Ptma-F-4 ... and it is capital
   
-  dat <- rbind(dat,dat2)
+  # # read grna counts
+  # dat2 <- read.csv("counts/rawgrnam13.csv",stringsAsFactors=FALSE)
+  # dim(dat2)
+  # rownames(dat2) <- dat2[,1]
+  # dat2 <- dat2[,-1]
+  # rownames(dat2) <- sprintf("grna-%s",rownames(dat2))  #rename all to avoid clashes... not sure if this is a good idea
+  # colnames(dat2) <- colnames(dat)
+  # #would be better if this was done on the cluster side and written into one single file
+  # 
+  # dat <- rbind(dat,dat2)
   dat
 }
-dat <- readcounttable()
+readcounttable20161209 <- function(){
+  d1 <- readcounttable20161209one("counts/raw20161209_1.csv")
+  d2 <- readcounttable20161209one("counts/raw20161209_2.csv")
+  d3 <- readcounttable20161209one("counts/raw20161209_3.csv")
+  dat <- cbind(d1,d2,d3)
+  colnames(dat) <- sprintf("%s",1:ncol(dat))
+  dat
+}
+dat <- readcounttable20161209()
 
 sum(dat[,150])
 
 ### Construct plate design
-getplatedesign <- function(){
+getplatedesign20161209 <- function(){
+  #TODO get rid of one plate on hiseq3 completely! and one is empty as well but can ignore this
+  
+  #hiseq1 & hiseq2: swapped B,C,D. 
+  
+  numplates <- 4+4+4
+
+  fromhiseq <- c(rep(1,384),rep(2,384),rep(3,384)) #todo
+    
   thecols <- rep(1:12,8)
-  thecols <- c(thecols,thecols)
+  thecols <- rep(thecols,numplates)
   therows <- as.double(sapply(1:8,function(i) rep(i,12)))
-  therows <- c(therows,therows)
-  theplate <- as.double(sapply(1:2,function(i) rep(i,96)))
+  therows <- rep(therows,numplates)
+  theplate <- as.double(sapply(1:numplates,function(i) rep(i,96)))
   level1<-thecols<12 & therows %in% c(1,2)
   level2<-therows %in% c(3,4)
   level3<-therows %in% c(5,6)
   level4<-therows %in% c(7,8)
   levelnum <- level1*1 + level2*2 + level3*3 + level4*4
   isgood <- levelnum>0
+  iscr <- theplate %in% c(4,8)
+  isss <- !iscr #not quite!
   cellcondition <- data.frame(
     col = thecols,
     row = therows,
     plate = theplate,
-    iscr = (1:192)<=96,
-    isss = (1:192)>96,
+    iscr = iscr,
+    isss = isss,
     level1=level1, level2=level2, level3=level3, level4=level4,
     levelnum=levelnum,
     isgood=isgood
@@ -83,7 +109,7 @@ getplatedesign <- function(){
   rownames(cellcondition) <- colnames(dat)
   cellcondition
 }
-cellcondition <- getplatedesign()
+cellcondition <- getplatedesign20161209()
 
 
 ######################################################################
@@ -150,6 +176,7 @@ count_cell <- dat
 gene_count <- colSums(count_cell[grep("ENSMUSG",rownames(count_cell)),])
 nogene_count <- count_cell[which(rownames(count_cell)=="no_feature"),]
 nomapped_count <- count_cell[which(rownames(count_cell)=="not_aligned"),]
+grna_count <- colSums(count_cell[grep("grna",rownames(count_cell)),])
 exon_prop <- rbind(gene_count, nogene_count, nomapped_count)
 exon_prop <- t(t(exon_prop) / colSums(exon_prop))
 mt_counts <- colSums(count_cell[mt_genes$ensembl_gene_id,])
@@ -160,16 +187,25 @@ par(cex.axis=1.5, cex.lab=1.5)
 plot(exon_prop[1,], mt_prop, pch=20, xlab="Proportion of reads mapped to exons",
      ylab="Proportion of reads mapped to mitochondrial genes", xlim=c(0,1), ylim=c(0,1))
 abline(h=0.1, v=0.5, col="red", lty=2, lwd=2)
-plot(gene_count)
 #dev.off()
+
+
 
 #remove cells with too few reads (compare to mean for a plate instead?)
 plot(gene_count)
+plot(gene_count[cellcondition$plate %in% c(1,2,3,4)])
+plot(gene_count[cellcondition$plate %in% c(5,6,7,8)])
+plot(gene_count[cellcondition$plate %in% c(6)])
 mean(gene_count[cellcondition$isss])
+mean(gene_count[cellcondition$plate %in% c(4)])
+mean(gene_count[cellcondition$plate %in% c(8)])
 cellcondition$isss[which(order(gene_count)<96+10)] <- FALSE
-#but there is still a cluster of cells with low expression. even for +30!
-#cellcondition$isgood[which(gene_count < 1.5e4 & cellcondition$isss)] <- FALSE
-#cellcondition$isss <- cellcondition$isss & cellcondition$isgood
+
+plot(grna_count)
+plot(mt_prop)
+#mean(gene_count[cellcondition$isss])
+#cellcondition$isss[which(order(gene_count)<96+10)] <- FALSE
+
 
 #Plot result per plate
 plot(mt_prop)
@@ -189,7 +225,7 @@ plot(as.double(colSums(dat[-which(rownames(dat3)=="grna-numread"),])))
 
 
 plot(as.double(dat3[which(rownames(dat3)=="grna-numread"),])/
-  as.double(colSums(dat3))) 
+       as.double(colSums(dat3))) 
 
 
 
@@ -231,7 +267,7 @@ plotgenemean <- function(){
   pairs(gene_mean_condition, log="xy", panel=my_line, lower.panel=NULL)
   #dev.off()
 }
-  
+
 
 ### Different ways of coloring the cells
 colorbylevel <- function(){
@@ -427,7 +463,7 @@ plot(log1(ncount_all[toensid("Ptp4a3"),]),
 
 
 pheatmapbylevel <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
-
+  
   lcounts <- log_ncount_all
   selectgenes <- which(rownames(lcounts) %in% geneids)
   
@@ -515,8 +551,8 @@ pheatmapcor(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
 
 
 runrtsne <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
-#  geneids <- c(ensidPtma,listolacellcycle$ensid)
-#  keepcells <- cellcondition$isss & cellcondition$levelnum %in% c(1,4)
+  #  geneids <- c(ensidPtma,listolacellcycle$ensid)
+  #  keepcells <- cellcondition$isss & cellcondition$levelnum %in% c(1,4)
   lcounts <- log_ncount_all
   selectgenes <- which(rownames(lcounts) %in% geneids)
   lcounts <- lcounts[selectgenes,keepcells]
@@ -626,7 +662,6 @@ plot_cell_trajectory(HSMM, 1, 2, color_by="levelnum")
 
 
 #make plates
-  
 makeplate <- function(inp, platei){
   plateA <- matrix(0,ncol=12,nrow=8)
   for(i in 1:12){
@@ -638,14 +673,7 @@ makeplate <- function(inp, platei){
   }
   plateA
 }
-plateA <- makeplate(colSums(dat[grep("grna-ptma",rownames(dat)),]), 1)
-plateB <- makeplate(colSums(dat[grep("grna-ptma",rownames(dat)),]), 2)
-plateB
+plateA <- makeplate(colSums(dat[grep("grna-",rownames(dat)),]), 4)
+#plateB <- makeplate(colSums(dat[grep("grna-ptma",rownames(dat)),]), 8)
 
-png("plots/grnacountdog.png")
 pheatmap(plateA,cluster_rows = FALSE, cluster_cols = FALSE, main = "DogSeq: gRNA count")
-dev.off()
-
-png("plots/grnacountss.png")
-pheatmap(plateB,cluster_rows = FALSE, cluster_cols = FALSE, main = "SmartSeq2: gRNA count")
-dev.off()
