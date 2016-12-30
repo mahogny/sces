@@ -16,7 +16,7 @@ tocelli <- function(row,col){
   out <- c()
   for(ro in row){
     for(co in col){
-      out <- c(out, 3*96 +  (ro-1)*12 + (co-1) + 1)
+      out <- c(out, 11*96 +  (ro-1)*12 + (co-1) + 1)
     }
   }
   out
@@ -26,12 +26,12 @@ acelli <- matrix(nrow = 8, ncol=12)
 #arow <- matrix(nrow = 8, ncol=12)
 for(i in 1:12){
   for(j in 1:8){
-    acelli[j,i] <- tocelli(i,j)
+    acelli[j,i] <- tocelli(j,i)
   }
 }
-cellgene <- rep("",384)
-for(i in (3*96):(4*96)){
-  cellgene[i] <- genelay[cellcondition$row[i], cellcondition$col[i]]
+cellgene <- rep("",12*96)
+for(i in 1:96){
+  cellgene[(4+4+3)*96+i-1] <- genelay[cellcondition$row[i], cellcondition$col[i]]
 }
 #cellcondition
 
@@ -52,6 +52,12 @@ i*12+j
 
 #indexCheck <- indexErn
 
+indexCtrl <- which(cellgene=="Thy1control")
+#only 303 and 321 have any grnas detected
+#indexCtrl <- c(303,321)
+indexCtrl <- c(306,309,315,318)
+
+
 # Only use normal genes, raw counts. no grna or cas9 levels
 #datfordeseq  <- dat[grep("ENSMUSG",rownames(dat)),]
 
@@ -71,9 +77,9 @@ data.frame(sym=togenesym(rownames(resOrdered)),padj=resOrdered$padj,stringsAsFac
 
 
 
-compare2 <- function(indexCheck){
-  keepcells <- 1:ncol(dat) %in% c(indexCtrl,indexCheck)
-  cellcond <- data.frame(levelnum=1:ncol(dat) %in% c(indexCtrl))
+compare2 <- function(indexCheck, indexC=indexCtrl){
+  keepcells <- 1:ncol(dat) %in% c(indexC,indexCheck)
+  cellcond <- data.frame(levelnum=1:ncol(dat) %in% c(indexC))
   cellcond <- cellcond[keepcells,,drop=FALSE]
   dds <- DESeqDataSetFromMatrix(countData = datfordeseq[,keepcells], colData = cellcond,
                                 design = ~ levelnum) 
@@ -84,17 +90,13 @@ compare2 <- function(indexCheck){
   res
 }
 
-showres <- function(res,N=min(50,nrow(resOrdered))){
+showres <- function(res,N=min(50,nrow(res))){
   resOrdered <- res[order(res$padj),]
   #resOrdered
-  data.frame(sym=togenesym(rownames(resOrdered[1:N])),padj=resOrdered$padj[1:N],stringsAsFactors=FALSE)
+  data.frame(sym=togenesym(rownames(resOrdered[1:N,])),padj=resOrdered$padj[1:N],stringsAsFactors=FALSE)
 }
 
 
-indexCtrl <- which(cellgene=="Thy1control")
-#only 303 and 321 have any grnas detected
-#indexCtrl <- c(303,321)
-indexCtrl <- c(306,309,315,318)
 
 indexXbp <- which(cellgene=="Xbp1")
 indexErn <- which(cellgene=="Ern1")
@@ -113,12 +115,22 @@ resEtv2 <- compare2(indexEtv2)
 #resXbp <- res
 #ddsXbp <- dds
 
+# resOrdered <- resXbp[order(resXbp$padj),]
+# sampleGOdata <- new("topGOdata",description = "Simple session", ontology = "BP",
+#                     allGenes = rownames(dat), geneSel = rownames(resOrdered)[1:20],
+#                       nodeSize = 10, annot = annFUN.db, affyLib = affyLib)
+# resultFisher <- runTest(sampleGOdata, algorithm = "classic", statistic = "fisher")
+
+res2 <- compare2(c(313,325),c(303,315))
+showres(res2)
+
 res <- resIl2
 
 showres(resXbp,2)
-showres(resErn,20)
+cat(paste(showres(resErn,100)$sym),sep="\n")
 intersect(showres(resXbp,20)$sym,showres(resErn,20)$sym)
 #Cdc45 and Gnai common??
+cat(ensconvert$mgi_symbol,file = "background.txt")
 
 showres(resEtv2,20)
 
@@ -139,4 +151,62 @@ which(rownames(resIl4)==toensid("Il4"))
 
 toensid("Il4")
 
+#poor mans normalization
+# ncount_all <- dat
+# for(i in 1:ncol(ncount_all)){
+#   ncount_all[,i] <- ncount_all[,i]/sum(ncount_all[,i])
+# }
+# #colMeans(ncount_all)
 
+### PCA
+#dopca <- function(){
+  #cor_ncount <- cor(ncount_all[gene_mean_ss>=0.00001,], method="spearman")
+  takecells <- cellcondition$plate==4+4+4 & cellgene!="f" & cellcondition$row<=5 & colMeans(dat)>1 & !((1:ncol(dat)) %in% c(1075,1084))    #cellgene!="Ern1" & (1:n)
+
+  takecells <- cellcondition$plate==4+4+4 & cellgene!="f" #& cellcondition$row<=5 & colMeans(dat)>1 #& !((1:ncol(dat)) %in% c(1075,1084))    #cellgene!="Ern1" & (1:n)
+  
+  colorbymouse <- function(){
+    thecol <- rep("black",nrow(cellcondition))
+    thecol[cellcondition$col %in% c(1,2,3)]<-"green"
+    thecol[cellcondition$col %in% c(4,5,6)]<-"blue"
+    thecol[cellcondition$col %in% c(7,8,9)]<-"red"
+    thecol  
+  }
+  colorbygene <- function(){
+    thecol <- rep("black",nrow(cellcondition))
+    thecol[cellgene=="Thy1control"]<-"green"
+#    thecol[cellgene=="Xbp1"]<-"red"
+#    thecol[cellgene=="F2rl1"]<-"red"
+    thecol[cellgene=="Il2"]<-"red"
+    thecol  
+  }
+  
+  the_mean_ss <- rowMeans(dat[,takecells])
+  takegenes <- the_mean_ss>=0.00001 && !(1:nrow(dat) %in% grep("grna",rownames(dat)))
+    #colMeans(dat[,takecells])
+  cor_ncount <- cor(ncount_all[takegenes ,takecells], method="spearman")  #olas way
+  #cor_ncount <- cor(log(1+dat)[the_mean_ss>=0.001 ,takecells], method="spearman")  #olas way
+  #cor_ncount <- t(ncount_all[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
+  pca <- prcomp(cor_ncount, scale=FALSE)
+  
+  
+#  pdf("tcellPCA.pdf")
+  ax1 <- 3
+  ax2 <- 2
+  par(cex.axis=1.5, cex.lab=1.5)
+  plot(pca$x[,ax1], pca$x[,ax2], pch=5, col="white",xlab="PC1", ylab="PC2")
+  text(pca$x[,ax1], pca$x[,ax2], cellgene[takecells], cex=0.5, col = colorbygene()[takecells])
+  text(pca$x[,ax1], pca$x[,ax2], (1:ncol(dat))[takecells], cex=1, col = colorbymouse()[takecells])
+  
+  
+  par(cex.axis=1.5, cex.lab=1.5)
+  plot(pca$x[,3], pca$x[,4], pch=5, col="white",xlab="PC3", ylab="PC4")
+  text(pca$x[,3], pca$x[,4], cellgene[takecells], cex=0.5)
+  text(pca$x[,3], pca$x[,4], (1:ncol(dat))[takecells], cex=1)
+  #  dev.off()
+
+  pca$rotation[,1]
+  
+#  takegenes <- the_mean_ss>=0.00001 && !(1:nrow(dat) %in% grep("grna",rownames(dat)))
+  runrtsne(rownames(dat)[takegenes],takecells,colorbygene())
+  

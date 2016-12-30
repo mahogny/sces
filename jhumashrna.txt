@@ -1,0 +1,15 @@
+gene
+Xbp1
+Xbp1
+Xbp1
+Ern1
+Ern1
+Ern1
+Ern1
+Irf4
+ctrl
+ctrl
+ctrl
+ctrl
+ctrl
+
