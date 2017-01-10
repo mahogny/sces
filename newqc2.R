@@ -16,7 +16,8 @@ installdeps <- function(){
   biocLite("limma")
   biocLite("scater")
   biocLite("scran")
-  #mintlinux package: the mesa stuff. libx. freetype
+  #mintlinux package: the mesa stuff. libx. freetype. python-pip python-dev
+  #run: pip install scipy
 }
 
 library(RColorBrewer)
@@ -40,7 +41,7 @@ library(stringr)
 library(reshape2)
 library("scater")
 library("scran")
-
+library("scLVM")
 
 ######################################################################
 ### Load data ########################################################
@@ -99,6 +100,11 @@ mynormalize <- function(dat){
 ncount_all <- mynormalize(dat)
 #ncount_all <- ncount_all[-which(rownames(ncount_all) %in% listnongenes),] #for htseq output. not used anymore
 log_ncount_all <- log1(ncount_all)
+
+#gene_mean_cr <- rowMeans(ncount_all[,cellcondition$iscr]) 
+gene_mean_ss <- rowMeans(ncount_all[,cellcondition$isss])
+#gene_mean_cr <- gene_mean_cr/sum(gene_mean_cr)
+gene_mean_ss <- gene_mean_ss/sum(gene_mean_ss)
 
 
 ### Construct plate design
@@ -557,6 +563,7 @@ plot(sort(cor_ptma,decreasing = TRUE))
 # Ptma    Gm9800    Gm4617       Ncl       Erh     Hmgb2       Ran      Pcna     Psma5      Ppa1 
 # 1.0000000 0.9623600 0.9419038 0.6859848 0.6818732 0.6742220 0.6652018 0.6650973 0.6635739 0.6607904 
 
+#Gm9800    Gm4617  share a ridiculous part of the sequence, precisely
 
 ######################################################################
 ### Plot gene vs gene ################################################
@@ -747,8 +754,11 @@ plotcor(log1(ncount_all["mcherry",keepcells]),
      log_metaptma)
 
 
-###############################################################################################
+######################################################################
+### Plot heatmaps ####################################################
+######################################################################
 
+#Plot a heatmap, show levels on top
 pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0){
   #keepcells=cellcondition$levelnum>0
   #geneids <- listolaptmagenes7d$ensid
@@ -762,18 +772,15 @@ pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0){
   #annotation_col
   annotation_colors <- list(levelnum=c(
     level1="#000000",level2="#005500",level3="#00AA00",level4="#00FF00"))
-  #level1="#00FF00",level2="#000000",level3="#0000FF",level4="#AA0000"))
   pheatmap(
-    #assay(dds)[select,],
     lcounts, 
     annotation_col=annotation_col,#gp = gpar(fill = "green")
     annotation_colors=annotation_colors,
     cluster_rows=TRUE, show_rownames=TRUE,
-    cluster_cols=TRUE, show_colnames=TRUE)
-  #todo: why is it not using the levels??
-  #library(grid) #might be needed?
-  #colnames(log2.norm.counts)
+    cluster_cols=TRUE, show_colnames=FALSE)
 }
+
+
 
 #  alsogenes <- c("Ptma")#sprintf("grna-ptma%s",1:5) #"cas9"
 #                         c(ensidPtma,listolaptmagenes7d$ensid,alsogenes))
@@ -783,7 +790,7 @@ pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0){
 # cellcondition[listannoyingcells,]
 # cellcondition$isss[listannoyingcells]<-FALSE
 
-keepcells <- cellcondition$isss & gene_count>500e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$isss & gene_count>500e3 & cellcondition$isgood #cellcondition$levelnum>0
 keepcells <- cellcondition$iscr & gene_count>10e3 & cellcondition$levelnum>0
 
 pheatmapbylevel(c(ensidPtma,listolaptmagenes7d$ensid),keepcells)
@@ -835,7 +842,7 @@ pheatmapcor(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
 
 
 ######################################################################
-### t-sne ###############################
+### t-sne ############################################################
 ######################################################################
 
 
@@ -920,30 +927,6 @@ runrtsne(c(ensidPtma,listola2c$ensid),tokeep)  #structure!
 
 colorbylevel
 
-
-# runtsne <- function(){
-#   # initialize counter to 0
-#   x <- 0
-#   epc <- function(x) {
-#     x <<- x + 1
-#     filename <- paste("d:\\plot", x, "jpg", sep=".")
-#     cat("> Plotting TSNE to ", filename, " ")
-#     
-#     # plot to d:\\plot.x.jpg file of 2400x1800 dimension
-#     jpeg(filename, width=2400, height=1800)
-#     
-#     plot(x, t='n', main="T-SNE")
-#     text(x, labels=rownames(mydata))
-#     dev.off()
-#   }
-#   
-#   # run tsne (maximum iterations:500, callback every 100 epochs, target dimension k=5)
-#   tsne_data <- tsne(mydata, k=5, epoch_callback=epc, max_iter=500, epoch=100)
-# }
-
-
-
-# monocle? can we find a progression?
 
 
 
@@ -1057,9 +1040,9 @@ myfastt <- function(groupA, groupB, keepgene = gene_mean_ss>=0.00001){
   colnames(out)[3] <- "mean2"
   sqldf("select * from out natural join ensconvert")
 }
+orderttest <- function(out) out[order(out$p.value),]
 
 ## differences between levels of grna (from facs)
-orderttest <- function(out) out[order(out$p.value),]
 t2vs4 <- myfastt(
   cellcondition$levelnum==2 & cellcondition$isgood & cellcondition$isss,
   cellcondition$levelnum==4 & cellcondition$isgood & cellcondition$isss)
@@ -1095,118 +1078,18 @@ orderttest(tfeeder2)[1:40,] #
 #what is the cut-off high and low Ptma? not obvious. can be at 1. or up to 2-3
 hist(as.double(log_ncount_all[ensidPtma,]))
 
+#Compare ptma low/high
 tlowhiPtma <- myfastt(
-  log_ncount_all[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss,
-  log_ncount_all[ensidPtma,]>=1 & cellcondition$isgood & cellcondition$isss)
+  log_ncount_all[ensidPtma,]<3  & cellcondition$isgood & cellcondition$isss,
+  log_ncount_all[ensidPtma,]>4  & cellcondition$isgood & cellcondition$isss)  #was cut off 1, for all mito
 orderttest(tlowhiPtma)[1:100,]
 
 
-# ensembl_gene_id     mean1     mean2 statistic        dm      p.value mgi_symbol
-# 7341 ENSMUSG00000023944 2.5861598 6.6578101 -22.02148 -4.071650 3.105824e-74   Hsp90ab1
-# 256  ENSMUSG00000026238 0.2629102 4.1185336 -21.88734 -3.855623 1.327005e-73       Ptma
-# 3632 ENSMUSG00000045128 2.2817501 5.5259196 -21.23189 -3.244170 1.603380e-70     Rpl18a
-# 6569 ENSMUSG00000041841 1.1087969 3.7512533 -20.68481 -2.642456 5.980984e-68      Rpl37
-# 4851 ENSMUSG00000034994 1.8546485 5.4083090 -19.91415 -3.553661 2.480590e-64       Eef2
-# 255  ENSMUSG00000026234 1.8919222 5.3921190 -19.84674 -3.500197 5.135641e-64        Ncl
-# 3028 ENSMUSG00000040952 2.1431352 5.1483719 -19.82328 -3.005237 6.615661e-64      Rps19
-# 6688 ENSMUSG00000060036 1.4971144 4.6617431 -19.71159 -3.164629 2.207475e-63       Rpl3
-# 4274 ENSMUSG00000025794 1.4819584 4.8052868 -19.69393 -3.323328 2.670854e-63      Rpl14
-# 4109 ENSMUSG00000032294 2.1000371 5.9623721 -19.61676 -3.862335 6.138572e-63        Pkm
-# 1321 ENSMUSG00000042244 2.3702680 0.3697308  19.59053  2.000537 8.144661e-63    Pglyrp3
-# 6322 ENSMUSG00000025290 1.6900735 4.6523716 -19.58331 -2.962298 8.804820e-63      Rps24
-# 5013 ENSMUSG00000057113 2.4047223 6.4469910 -19.53145 -4.042269 1.539902e-62       Npm1
-# 2917 ENSMUSG00000030744 2.1451703 5.9539280 -19.48289 -3.808758 2.598734e-62       Rps3
-# 7284 ENSMUSG00000008668 2.1690472 5.4090944 -19.42783 -3.240047 4.703013e-62      Rps18
-# 7615 ENSMUSG00000024608 2.2678517 5.5787002 -19.41751 -3.310848 5.256138e-62      Rps14
-# 1601 ENSMUSG00000028234 1.8633316 5.0450588 -19.31440 -3.181727 1.595495e-61      Rps20
-# 3145 ENSMUSG00000003429 1.9525598 5.5563599 -19.09454 -3.603800 1.699048e-60      Rps11
-# 7391 ENSMUSG00000057863 1.8298497 4.2493439 -19.01773 -2.419494 3.879634e-60      Rpl36
-# 4271 ENSMUSG00000032518 2.6889902 6.1388280 -19.00779 -3.449838 4.316899e-60       Rpsa
-# 2329 ENSMUSG00000072692 0.9238852 3.1301720 -19.00449 -2.206287 4.472890e-60    Rpl37rt
-# 6600 ENSMUSG00000022283 1.5815919 4.7789735 -18.97371 -3.197382 6.225860e-60     Pabpc1
-# 2713 ENSMUSG00000051695 1.2890594 4.0657307 -18.90767 -2.776671 1.265492e-59      Pcbp1
-# 6337 ENSMUSG00000042354 1.0497911 4.0081902 -18.90123 -2.958399 1.356102e-59       Gnl3
-# 144  ENSMUSG00000043716 1.5939318 5.3080389 -18.89842 -3.714107 1.397647e-59       Rpl7
-# 2767 ENSMUSG00000057841 1.9547244 5.0888552 -18.89797 -3.134131 1.404459e-59      Rpl32
-# 5213 ENSMUSG00000020372 2.3690931 5.8762672 -18.84604 -3.507174 2.452851e-59      Rack1
-# 3058 ENSMUSG00000037563 0.9403649 3.3338979 -18.83467 -2.393533 2.771112e-59      Rps16
-# 2650 ENSMUSG00000004980 1.5555389 4.7831787 -18.78346 -3.227640 4.801286e-59  Hnrnpa2b1
-# 3315 ENSMUSG00000030695 2.2996978 6.3066492 -18.72457 -4.006951 9.030655e-59      Aldoa
-# 1573 ENSMUSG00000059291 0.9910967 3.5094000 -18.64363 -2.518303 2.150865e-58      Rpl11
-# 2396 ENSMUSG00000060419 1.0015533 3.2920716 -18.63495 -2.290518 2.360531e-58  Rps16-ps2
-# 7242 ENSMUSG00000052146 1.3371594 4.0269179 -18.57931 -2.689759 4.284874e-58      Rps10
-# 4508 ENSMUSG00000031320 1.6914519 5.2782513 -18.56692 -3.586799 4.893360e-58      Rps4x
-# 3386 ENSMUSG00000025508 1.6547138 4.5107056 -18.56029 -2.855992 5.253527e-58      Rplp2
-# 282  ENSMUSG00000081051 1.7186405 4.1275934 -18.52898 -2.408953 7.346186e-58    Gm15427
-# 4960 ENSMUSG00000025362 1.7817472 4.5892126 -18.52746 -2.807465 7.466708e-58      Rps26
-# 5492 ENSMUSG00000035530 1.2912423 4.3691622 -18.51184 -3.077920 8.826678e-58       Eif1
-# 2357 ENSMUSG00000029614 1.4113413 4.7215349 -18.47814 -3.310194 1.266168e-57       Rpl6
-# 1978 ENSMUSG00000028936 1.3270877 4.1371955 -18.45162 -2.810108 1.681829e-57      Rpl22
-# 4827 ENSMUSG00000063457 1.9453491 4.7851291 -18.45081 -2.839780 1.696386e-57      Rps15
-# 6594 ENSMUSG00000058600 1.3248627 4.2973426 -18.38619 -2.972480 3.386746e-57      Rpl30
-# 2395 ENSMUSG00000029430 1.3810850 4.8474840 -18.38242 -3.466399 3.526342e-57        Ran
-# 2484 ENSMUSG00000041453 1.7213421 4.5002102 -18.36356 -2.778868 4.314448e-57      Rpl21
-# 4163 ENSMUSG00000037742 3.2139986 6.9286246 -18.31175 -3.714626 7.507810e-57     Eef1a1
-# 1790 ENSMUSG00000028639 1.5677855 4.7459402 -18.27596 -3.178155 1.100682e-56       Ybx1
-# 7026 ENSMUSG00000050299 1.1497729 3.3829488 -18.27147 -2.233176 1.154761e-56     Gm9843
-# 3201 ENSMUSG00000061787 1.3696211 4.3724243 -18.25511 -3.002803 1.375267e-56      Rps17
-# 4946 ENSMUSG00000025393 1.9794447 5.9055648 -18.23956 -3.926120 1.623883e-56      Atp5b
-# 5895 ENSMUSG00000021270 2.5568564 6.1388565 -18.22793 -3.582000 1.838767e-56   Hsp90aa1
-# 685  ENSMUSG00000062647 1.1586922 3.9550405 -18.20274 -2.796348 2.406430e-56      Rpl7a
-# 7920 ENSMUSG00000024991 1.3879326 4.4087501 -18.19886 -3.020818 2.508122e-56      Eif3a
-# 7033 ENSMUSG00000025613 1.3155670 4.9804116 -18.18419 -3.664845 2.933488e-56       Cct8
-# 2670 ENSMUSG00000036371 1.7225652 4.8669042 -18.16396 -3.144339 3.640862e-56     Serbp1
-# 3305 ENSMUSG00000032637 0.8840982 3.5294010 -18.15999 -2.645303 3.798376e-56     Atxn2l
-# 5304 ENSMUSG00000060938 1.9073951 4.7983060 -18.15123 -2.890911 4.170630e-56      Rpl26
-# 4944 ENSMUSG00000061315 1.1357732 4.1313042 -18.13357 -2.995531 5.036145e-56       Naca
-# 4969 ENSMUSG00000020850 1.2251455 4.1335185 -18.12017 -2.908373 5.810113e-56      Prpf8
-# 1964 ENSMUSG00000063524 2.3212197 6.0260431 -18.08519 -3.704823 8.438452e-56       Eno1
-# 6663 ENSMUSG00000003970 2.5050358 5.7739992 -18.06424 -3.268963 1.055192e-55       Rpl8
-# 2230 ENSMUSG00000047215 1.1443933 3.9434694 -18.03392 -2.799076 1.458035e-55       Rpl9
-# 3160 ENSMUSG00000059070 1.9458407 5.0379259 -17.97248 -3.092085 2.806729e-55      Rpl18
-# 5326 ENSMUSG00000078812 1.7443050 5.5418949 -17.94848 -3.797590 3.624710e-55      Eif5a
-# 6384 ENSMUSG00000060373 1.1521287 4.6213351 -17.88681 -3.469206 6.990820e-55     Hnrnpc
-# 4404 ENSMUSG00000084349 0.9729341 3.1247165 -17.88575 -2.151782 7.069901e-55   Rpl3-ps1
-# 360  ENSMUSG00000040225 1.2753474 3.9699697 -17.87361 -2.694622 8.046027e-55     Prrc2c
-# 2877 ENSMUSG00000036427 1.6383829 5.0783443 -17.87330 -3.439961 8.072541e-55       Gpi1
-# 4120 ENSMUSG00000032399 2.9081844 6.2399268 -17.87213 -3.331742 8.173624e-55       Rpl4
-# 5573 ENSMUSG00000016559 1.4068812 4.9210001 -17.79511 -3.514119 1.855058e-54      H3f3b
-# 3983 ENSMUSG00000070319 0.9336509 3.7240742 -17.76253 -2.790423 2.623427e-54      Eif3g
-# 356  ENSMUSG00000053332 1.3776553 4.2623159 -17.71000 -2.884661 4.585288e-54       Gas5
-# 4139 ENSMUSG00000036781 1.2487346 4.1529012 -17.70973 -2.904167 4.598502e-54     Rps27l
-# 3306 ENSMUSG00000030738 1.0608494 3.8502059 -17.69191 -2.789357 5.557344e-54      Eif3c
-# 3273 ENSMUSG00000008683 1.4632612 4.3439967 -17.68462 -2.880735 6.004919e-54     Rps15a
-# 3814 ENSMUSG00000000740 1.3296014 3.6861977 -17.68091 -2.356596 6.246704e-54      Rpl13
-# 1264 ENSMUSG00000028081 1.9440640 5.2142934 -17.65704 -3.270229 8.049290e-54     Rps3a1
-# 4958 ENSMUSG00000093674 2.6881315 5.3028108 -17.62838 -2.614679 1.091326e-53      Rpl41
-# 2986 ENSMUSG00000012848 2.6252577 6.0462056 -17.58135 -3.420948 1.797886e-53       Rps5
-# 4046 ENSMUSG00000009927 1.4100974 4.3563693 -17.56629 -2.946272 2.109573e-53      Rps25
-# 7803 ENSMUSG00000071644 1.3873571 4.5243644 -17.55871 -3.137007 2.286292e-53      Eef1g
-# 7645 ENSMUSG00000025428 1.6252902 5.1110340 -17.55539 -3.485744 2.368237e-53     Atp5a1
-# 989  ENSMUSG00000027620 1.3122748 3.7966667 -17.55094 -2.484392 2.482596e-53      Rbm39
-# 422  ENSMUSG00000026615 1.0347017 3.9994604 -17.52981 -2.964759 3.106467e-53       Eprs
-# 4544 ENSMUSG00000080775 0.8085287 2.8093760 -17.49383 -2.000847 4.549332e-53     Gm6368
-# 7276 ENSMUSG00000041881 1.1511759 4.1473322 -17.49031 -2.996156 4.722526e-53     Ndufa7
-# 4226 ENSMUSG00000063856 1.3011855 4.3736443 -17.47479 -3.072459 5.567342e-53       Gpx1
-# 1444 ENSMUSG00000047676 1.1021510 3.0060369 -17.44915 -1.903886 7.305302e-53  Rpsa-ps10
-# 4890 ENSMUSG00000061904 1.4471015 4.7906957 -17.44334 -3.343594 7.769637e-53    Slc25a3
-# 2795 ENSMUSG00000023456 1.5338994 4.9407072 -17.40207 -3.406808 1.203017e-52       Tpi1
-# 5335 ENSMUSG00000018286 1.1450258 4.3445239 -17.39564 -3.199498 1.287801e-52      Psmb6
-# 7566 ENSMUSG00000024359 1.2312163 4.4367710 -17.39210 -3.205555 1.336918e-52      Hspa9
-# 4881 ENSMUSG00000020048 1.2491386 4.2138872 -17.38669 -2.964749 1.415790e-52    Hsp90b1
-# 5294 ENSMUSG00000019505 1.7336193 5.2411844 -17.38402 -3.507565 1.456324e-52        Ubb
-# 6591 ENSMUSG00000022234 1.3324907 4.7543684 -17.35662 -3.421878 1.946559e-52       Cct5
-# 3410 ENSMUSG00000031490 1.3550136 4.6389157 -17.35641 -3.283902 1.950795e-52   Eif4ebp1
-# 1513 ENSMUSG00000057280 1.5794983 0.1705183  17.34951  1.408980 2.098561e-52       Musk
-# 7163 ENSMUSG00000014769 0.9894916 4.0205717 -17.33006 -3.031080 2.578282e-52      Psmb1
-# 6974 ENSMUSG00000060636 1.2071299 3.6623542 -17.32144 -2.455224 2.824638e-52     Rpl35a
-# 4034 ENSMUSG00000015656 1.7831191 5.3549311 -17.32016 -3.571812 2.862954e-52      Hspa8
-# 2403 ENSMUSG00000070493 1.1091121 4.3558308 -17.31871 -3.246719 2.907320e-52     Chchd2
 
-tlowhiPtmaNowt <- myfastt(
-  log_ncount_all[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1,
-  log_ncount_all[ensidPtma,]>=1 & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1)
-orderttest(tlowhiPtmaNowt)[1:100,]
+# tlowhiPtmaNowt <- myfastt(
+#   log_ncount_all[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1,
+#   log_ncount_all[ensidPtma,]>=1 & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1)
+# orderttest(tlowhiPtmaNowt)[1:100,]
 
 
 #TODO GO analysis?
@@ -1217,17 +1100,56 @@ write.table(tlowhiPtma$ensembl_gene_id[1:200], file="gotest_lowhiptma.csv")
 
 #mean(out$mean1)
 
-#TODO also use brennecke!
 
 
 ######################################################################
-### brennecke, gozde is doing this ###############################################
+### Most heterogenous genes ##########################################
 ######################################################################
 
+## heterogenous, all cells (SS)
+keepAll <- cellcondition$isgood & cellcondition$isss 
+tnAll <- fitTechnicalNoise(
+  ncount_all[,keepAll],
+  fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
+hetAll  <- getVariableGenes(fit_type = 'log',ncount_all[,keepAll], tnAll$fit, plot=TRUE)
 
+## heterogenious, Ptma + and -
+keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount_all[ensidPtma,]<3
+keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount_all[ensidPtma,]>4  
+# keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount_all["mcherry",]<2
+# keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount_all["mcherry",]>3
+tnPtmaLow <- fitTechnicalNoise(
+  ncount_all[,keepLow],
+  fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
+tnPtmaHigh <- fitTechnicalNoise(
+  ncount_all[,keepHigh],
+  fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
+
+#Customized, only makes sense for log
+getVariableGenes2 <- function(nCountsEndo, fit, method = "fit", threshold = 0.1, fit_type = NULL, plot = T) {
+  LCountsEndo <- log10(nCountsEndo + 1)
+  LmeansEndo <- rowMeans(LCountsEndo)
+  Lcv2Endo = rowVars(LCountsEndo)/LmeansEndo^2
+  score = fit$opts$offset * coefficients(fit)["a"] * 10^(-coefficients(fit)["k"] * LmeansEndo)
+  is_het = score < Lcv2Endo & LmeansEndo > fit$opts$minmean
+  ret = score
+  ret[!is_het] <- -1
+  ret
+}
+
+
+hetPtmaLow  <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount_all[,keepLow],  tnPtmaLow$fit, plot=FALSE)
+hetPtmaHigh <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount_all[,keepHigh], tnPtmaHigh$fit, plot=FALSE)
+
+length(which(hetPtmaLow>=0))
+length(which(hetPtmaHigh>=0))
+diffHet <- hetPtmaHigh[hetPtmaHigh>=0 & hetPtmaLow<0]
+length(diffHet)
+diffHet <- diffHet[order(diffHet)]
+data.frame(sym=togenesym(names(diffHet)[1:100]),score=diffHet[1:100])
 
 ######################################################################
-### gRNA counts ###############################################
+### gRNA counts ######################################################
 ######################################################################
 
 #TODO check again, which grna molecules do we have? can we look at the promoter in more detail?
@@ -1261,7 +1183,7 @@ dev.off()
 
 #### Compare the dynamic range of gRNA detection
 plotsortgrna <- function(log_ncount_all){
-  out <- sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",i),rownames(ncount_all)),]))
+  out <- sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",1),rownames(ncount_all)),]))
   for(i in 2:5){
     out <- cbind(out,sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",i),rownames(ncount_all)),])))
   }  
@@ -1284,7 +1206,8 @@ dev.off()
 ### Upstream screening ###############################################
 ######################################################################
 
-takecells_ko <- log_ncount_all[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss
+#or constrain by mcherry! 
+takecells_ko <- log_ncount_all[ensidPtma,]<4  & cellcondition$isgood & cellcondition$isss
 takecells_wt <- log_ncount_all[ensidPtma,]>=3 & cellcondition$isgood & cellcondition$isss
 takecells_all <- log_ncount_all[ensidPtma,]>1 & cellcondition$isgood & cellcondition$isss
 
@@ -1311,8 +1234,9 @@ cor_diff <- sqldf("select * from cor_diff natural join (select ensembl_gene_id a
 cor_diff <- cor_diff[order(cor_diff[,3]),]
 cor_diff[1:15,]
 tail(cor_diff,n=15)
-#TODO sqldf in genesym!
 plot(cor_diff$value)
+#### note. dangerous if we don't deal with homologs. should use sailfish or filter out duplicates in final count table
+### but should not filter out the grnas comparing their counts! 
 
 # 124  ENSMUSG00000092341 ENSMUSG00000026234 -0.8647368  Malat1     Ncl
 # 3784 ENSMUSG00000026234 ENSMUSG00000092341 -0.8647368     Ncl  Malat1
@@ -1639,4 +1563,7 @@ plot(sData@PC[,c(1,2)], col=cols,pch=sData@clusters, main="CIDR", xlab="PC1", yl
 #https://genomebiology.biomedcentral.com/articles/10.1186/s13059-015-0805-z    
 
 #https://github.com/epierson9/ZIFA
+
+
+
 
