@@ -16,6 +16,7 @@ installdeps <- function(){
   biocLite("limma")
   biocLite("scater")
   biocLite("scran")
+  biocLite("org.Mm.eg.db")
   #mintlinux package: the mesa stuff. libx. freetype. python-pip python-dev
   #run: pip install scipy
 }
@@ -35,13 +36,15 @@ library(plotrix)
 library(Matrix)
 library(sqldf)
 library(genefilter)
-#library(topGO)
+library(topGO)
+library(org.Mm.eg.db)
 library(limma)
 library(stringr)
 library(reshape2)
 library("scater")
 library("scran")
 library("scLVM")
+library(zoo)
 
 ######################################################################
 ### Load data ########################################################
@@ -97,12 +100,13 @@ mynormalize <- function(dat){
   #print(sfnew)
   dat2
 }
-ncount_all <- mynormalize(dat)
-#ncount_all <- ncount_all[-which(rownames(ncount_all) %in% listnongenes),] #for htseq output. not used anymore
-log_ncount_all <- log1(ncount_all)
+ncount <- mynormalize(dat)
+ncount <- as.matrix(ncount)
+#ncount <- ncount[-which(rownames(ncount) %in% listnongenes),] #for htseq output. not used anymore
+log_ncount <- log(1+ncount)
 
-#gene_mean_cr <- rowMeans(ncount_all[,cellcondition$iscr]) 
-gene_mean_ss <- rowMeans(ncount_all[,cellcondition$isss])
+#gene_mean_cr <- rowMeans(ncount[,cellcondition$iscr]) 
+gene_mean_ss <- rowMeans(ncount[,cellcondition$isss])
 #gene_mean_cr <- gene_mean_cr/sum(gene_mean_cr)
 gene_mean_ss <- gene_mean_ss/sum(gene_mean_ss)
 
@@ -187,9 +191,17 @@ cellcondition <- getplatedesign20161209()
 
 colorbygene <- function(ensid=ensidPtma,keep=rep(TRUE,ncol(dat))){
   thecol <- rep("red",nrow(cellcondition))
-  v <- log_ncount_all[ensid,]
+  v <- log_ncount[ensid,]
   rgb(0, v/max(v[keep]), 0, maxColorValue=1)
 }
+# colorbyptma <- function(keep=rep(TRUE,ncol(dat))){
+#   thecol <- rep("red",nrow(cellcondition))
+#   v <- log_ncount[ensidPtma,]
+#   rgb(0, v/max(v[keep]), 0, maxColorValue=1)
+#   col <- rep("#000000",length(v))
+#   col[v>median(as.double(v))] <- "#00FF00"
+#   col
+# }
 colorbylevel <- function(){
   thecol <- rep("red",nrow(cellcondition))
   thecol[cellcondition$level1]<-"#000000"
@@ -289,81 +301,66 @@ colnames(listola2c) <- c("ensid","genesym")
 
 
 ######################################################################
-### QC for cells #####################################################
+### New QC for cells #################################################
 ######################################################################
 
-## mitochondrial content
-count_cell <- dat
-gene_count <- colSums(count_cell[grep("ENSMUSG",rownames(count_cell)),])
-nogene_count <- count_cell[which(rownames(count_cell)=="no_feature"),]
-nomapped_count <- count_cell[which(rownames(count_cell)=="not_aligned"),]
-grna_count <- colSums(count_cell[grep("grna",rownames(count_cell)),])
-exon_prop <- rbind(gene_count, nogene_count, nomapped_count)
-exon_prop <- t(t(exon_prop) / colSums(exon_prop))
-mt_counts <- colSums(count_cell[mt_genes$ensembl_gene_id,])
+#Numbef of grna reads
+grna_count <- colSums(dat[grep("grna",rownames(dat)),])
+#Number of exonic reads
+gene_count <- colSums(dat[grep("ENSMUSG",rownames(dat)),])
+#Number of detected genes
+detected_genes <- colSums(dat>0)
+#Proportion of mitochondrial reads
+mt_counts <- colSums(dat[mt_genes$ensembl_gene_id,])
 mt_prop <- mt_counts / gene_count  
 
-
-
-#Plot result per plate
-plot(grna_count)
-plot(mt_prop)
-
-
-#pdf("qc_exonprop_mtprop_cell_2i_2.pdf")
-par(cex.axis=1.5, cex.lab=1.5)
-plot(exon_prop[1,], mt_prop, pch=20, xlab="Proportion of reads mapped to exons",
-     ylab="Proportion of reads mapped to mitochondrial genes", xlim=c(0,1), ylim=c(0,1))
-abline(h=0.1, v=0.5, col="red", lty=2, lwd=2)
-#dev.off()
-
-
-
-#remove cells with too few reads (compare to mean for a plate instead?)
-png("plots/readcounts.png",width=800)
-par(mfrow=c(1,2))
-plot(gene_count[cellcondition$isss],main="SS read count")
-plot(gene_count[cellcondition$iscr],main="DogSeq read count")
+findbadcells <- function(forcells,mt_cutoff=0.1){
+  # Using scater to assign outliers
+  libsize.drop <- isOutlier(gene_count[forcells], nmads=2, type="lower",log=TRUE)
+  feature.drop <- isOutlier(detected_genes[forcells], nmads=2, type="lower", log=TRUE)
+  mito.drop <- mt_prop[forcells]>mt_cutoff
+  
+  todrop <- libsize.drop | feature.drop | mito.drop
+  print(dim(todrop))
+  totc<-length(todrop)
+  print(as.matrix(list(
+    total=totc,
+    kept=totc-length(which(todrop)),
+    drop.by.size=length(which(libsize.drop)),
+    drop.by.features=length(which(feature.drop)),
+    drop.by.mito=length(which(mito.drop))
+  )))
+  
+  todroptot <- rep(FALSE, ncol(dat))
+  todroptot[(1:ncol(dat))[forcells][todrop]] <- TRUE
+  
+  par(mfrow=c(1,3))
+  hist(log10(gene_count[forcells]), xlab="Mapped reads (log-scale)", main="",breaks=50, col="grey80", ylab="Number of cells")
+  v<-max(gene_count[forcells][libsize.drop])
+  abline(v=log10(v), col="red", lty=2, lwd=1.5) 
+  hist(detected_genes[forcells], xlab="Number of detected genes", main="",breaks=50, col="grey80", ylab="Number of cells")
+  v<-max(detected_genes[forcells][feature.drop])
+  abline(v=v, col="red", lty=2, lwd=1.5) 
+  hist(mt_prop[forcells], xlab="mtDNA %", main="",breaks=50, col="grey80", ylab="Number of cells")
+  abline(v=mt_cutoff, col="red", lty=2, lwd=1.5)
+  #dev.off()
+  
+  todroptot
+}
+png("plots/QC_ss.png",width=800)
+x<-findbadcells(cellcondition$isss)
+#as.double(gene_count[x]) #read counts of dropped genes
+cellcondition$isgood[x]<-FALSE
+dev.off()
+png("plots/QC_dogseq.png",width=800)
+x<-findbadcells(cellcondition$iscr)
+cellcondition$isgood[x]<-FALSE
 dev.off()
 
-# plot(gene_count[cellcondition$plate %in% c(4,8,9,10)],ylim=c(0,200000))
-# plot(gene_count[cellcondition$plate %in% c(4+4+4)],ylim=c(0,200000))
-# length(which(gene_count[cellcondition$plate %in% c(4,8,9,10)]>100e3))
-# plot(gene_count[cellcondition$plate %in% c(1,2,3,4)])
-# plot(gene_count[cellcondition$plate %in% c(5,6,7,8)])
-# plot(gene_count[cellcondition$plate %in% c(6)])
-# mean(gene_count[cellcondition$isss])
-# mean(gene_count[cellcondition$plate %in% c(4)])
-# mean(gene_count[cellcondition$plate %in% c(8)])
-#cellcondition$isss[which(order(gene_count)<96+10)] <- FALSE
-
-#plot(gene_count[cellcondition$plate %in% c(4,8,9,10,11)],ylim=c(0,1e6))
-
-length(which(gene_count[cellcondition$plate %in% c(4,8,9,10,11)]>20e3))
-
-#remove bad cells
-#cellcondition$isgood[cellcondition$isss & gene_count<1e5] <- FALSE
-
-cellcondition$isgood[gene_count<100e3 & cellcondition$isss] <- FALSE #minimum exonic reads for regular chemistry
-
-
-#mean(gene_count[cellcondition$isss])
-#cellcondition$isss[which(order(gene_count)<96+10)] <- FALSE
-
-
-
-
-
-### TODO detected number of genes?
-
-
-
 ### Comparing average gene expression among conditions
-
-
 plotgenemean <- function(){
-  gene_mean_cr <- rowMeans(ncount_all[,cellcondition$iscr]) 
-  gene_mean_ss <- rowMeans(ncount_all[,cellcondition$isss])
+  gene_mean_cr <- rowMeans(ncount[,cellcondition$iscr]) 
+  gene_mean_ss <- rowMeans(ncount[,cellcondition$isss])
   gene_mean_cr <- gene_mean_cr/sum(gene_mean_cr)
   gene_mean_ss <- gene_mean_ss/sum(gene_mean_ss)
   
@@ -381,21 +378,21 @@ plotgenemean <- function(){
 
 ### PCA for all expressed genes
 dopca <- function(){
-  gene_mean_cr <- rowMeans(ncount_all[,cellcondition$iscr]) 
-  gene_mean_ss <- rowMeans(ncount_all[,cellcondition$isss])
+  gene_mean_cr <- rowMeans(ncount[,cellcondition$iscr]) 
+  gene_mean_ss <- rowMeans(ncount[,cellcondition$isss])
   gene_mean_cr <- gene_mean_cr/sum(gene_mean_cr)
   gene_mean_ss <- gene_mean_ss/sum(gene_mean_ss)
   
   length(which(gene_mean_ss>=0.00001))
-  #cor_ncount <- cor(ncount_all[gene_mean_ss>=0.00001,], method="spearman")
+  #cor_ncount <- cor(ncount[gene_mean_ss>=0.00001,], method="spearman")
 #  takecells <- cellcondition$plate %in% c(1) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
 #  takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
   takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood &cellcondition$isfeeder  #& !cellcondition$iswt 
   takecells <- cellcondition$plate %in% c(1) & cellcondition$isss & cellcondition$isgood &cellcondition$isfeeder  #& !cellcondition$iswt 
   
   takecells[weird ] <- FALSE
-  cor_ncount <- cor(ncount_all[gene_mean_ss>=0.00001 ,takecells], method="spearman")  #olas way
-  #cor_ncount <- t(ncount_all[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
+  cor_ncount <- cor(ncount[gene_mean_ss>=0.00001 ,takecells], method="spearman")  #olas way
+  #cor_ncount <- t(ncount[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
   pca <- prcomp(cor_ncount, scale=FALSE)
   #pdf("pca2d_cor_50.pdf")
   par(cex.axis=1.5, cex.lab=1.5)
@@ -406,6 +403,34 @@ dopca <- function(){
 }
 
 
+
+######################################################################
+### GO functions #####################################################
+######################################################################
+
+### Simplified use of topgo
+stopgo <- function(all_data,DE_data,ID=c("genename","symbol","EnsemblID")){
+  #all_data <- factor(all_data)#rownames(dat)
+  #DE_data <-listolacellcycle$genesym
+  #all_data <- rownames(ncount)
+  #all_data <- unique(ensconvert$mgi_symbol)
+  
+  relevant.genes <- rep(1,length(all_data))
+  relevant.genes[all_data %in% DE_data] <- 0
+  names(relevant.genes) <- all_data
+  relevant.genes <- as.factor(relevant.genes)
+  
+  GOdata.BP <- new("topGOdata", ontology='BP', allGenes = relevant.genes,nodeSize=5,annot = annFUN.org, 
+                   mapping="org.Mm.eg.db", ID=ID, geneSel = function(p) p < 0.01)
+  # apply Fisher's exact test with elimination mode:
+  results <- runTest(GOdata.BP, algorithm = 'elim', statistic = 'fisher')
+  GenTable(GOdata.BP, results, topNodes = 40)
+}
+## Even simpler use of topgo. background is all genes by default
+stopgosym <- function(genelist,bg=unique(ensconvert$mgi_symbol)){
+  stopgo(bg,genelist,"symbol")
+}
+#mytopgo(rownames(ncount),orderttest(tlowhiPtma)[1:100,7],ID="genename")
 
 ######################################################################
 ### LIMMA batch effect removal and QC ################################
@@ -419,15 +444,15 @@ dopca <- function(){
 ### PCA
 dopca2 <- function(){
   
-  the_gene_mean <- rowMeans(ncount_all[,cellcondition$isgood & cellcondition$isss])
+  the_gene_mean <- rowMeans(ncount[,cellcondition$isgood & cellcondition$isss])
   the_gene_mean <- the_gene_mean/sum(the_gene_mean)
   
   length(which(the_gene_mean>=0.00001))
-  #cor_ncount <- cor(ncount_all[gene_mean_ss>=0.00001,], method="spearman")
+  #cor_ncount <- cor(ncount[gene_mean_ss>=0.00001,], method="spearman")
   takecells <- cellcondition$isss & cellcondition$isgood  # %in% c(1) #cellcondition$isss #& !cellcondition$iswt 
-#  cor_ncount <- cor(ncount_all[gene_mean_ss>=0.000001 ,takecells], method="spearman")  #olas way
-  cor_ncount <- cor(log_ncount_all[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
-  #cor_ncount <- t(ncount_all[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
+#  cor_ncount <- cor(ncount[gene_mean_ss>=0.000001 ,takecells], method="spearman")  #olas way
+  cor_ncount <- cor(log_ncount[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
+  #cor_ncount <- t(ncount[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
   pca <- prcomp(cor_ncount, scale=FALSE)
   #pdf("pca2d_cor_50.pdf")
   par(cex.axis=1.5, cex.lab=1.5)
@@ -441,18 +466,18 @@ dopca2 <- function(){
   ccol[clust$cluster==2] <- "red"
   plot(pca$x[,1], pca$x[,2], pch=20, cex=.8,col=ccol, xlab="PC1", ylab="PC2")
   
-  g1<-log_ncount_all[ ,takecells][,clust$cluster==1]
-  g2<-log_ncount_all[ ,takecells][,clust$cluster==2]
+  g1<-log_ncount[ ,takecells][,clust$cluster==1]
+  g2<-log_ncount[ ,takecells][,clust$cluster==2]
 
-  df <- data.frame(p.value=rep(666,nrow(log_ncount_all)), x=rep(1,nrow(log_ncount_all)), y=rep(1,nrow(log_ncount_all)))
-  for(i in (1:nrow(log_ncount_all))[the_gene_mean>=0.001]){
+  df <- data.frame(p.value=rep(666,nrow(log_ncount)), x=rep(1,nrow(log_ncount)), y=rep(1,nrow(log_ncount)))
+  for(i in (1:nrow(log_ncount))[the_gene_mean>=0.001]){
     t <- t.test(g1[i,],g2[i,])
     df[i,1] <- t$p.value
     df[i,2] <- t$estimate[1]
     df[i,3] <- t$estimate[2]
   }
 #  df<-data.frame(pval=outt,fold=outf)  
-  rownames(df)<-rownames(log_ncount_all)
+  rownames(df)<-rownames(log_ncount)
   df <- df[order(df$p.value,decreasing = FALSE),]
   df[1:50,]
   data.frame(n=togenesym(rownames(df)[1:50]),p=df$pval[1:50],fold=df$fold[1:50])
@@ -469,7 +494,7 @@ dopca2 <- function(){
 
 batchvector <- rep(0,ncol(dat))
 batchvector[!cellcondition$isss] <- 1
-#batch_log_ncount <- removeBatchEffect(log_ncount_all, batchvector)
+#batch_log_ncount <- removeBatchEffect(log_ncount, batchvector)
 
 # 
 # TODO: order new TSO!
@@ -489,15 +514,15 @@ batchvector[!cellcondition$isss] <- 1
 
 ### Average gene levels for cells instead of bulk
 # genemeanperlevel <- cbind(
-#   rowMeans(ncount_all[,cellcondition$level1]),
-#   rowMeans(ncount_all[,cellcondition$level2]),
-#   rowMeans(ncount_all[,cellcondition$level3]),
-#   rowMeans(ncount_all[,cellcondition$level4]))
+#   rowMeans(ncount[,cellcondition$level1]),
+#   rowMeans(ncount[,cellcondition$level2]),
+#   rowMeans(ncount[,cellcondition$level3]),
+#   rowMeans(ncount[,cellcondition$level4]))
 genemeanperlevel <- cbind(
-  rowMeans(log_ncount_all[,cellcondition$level1]),
-  rowMeans(log_ncount_all[,cellcondition$level2]),
-  rowMeans(log_ncount_all[,cellcondition$level3]),
-  rowMeans(log_ncount_all[,cellcondition$level4]))
+  rowMeans(log_ncount[,cellcondition$level1]),
+  rowMeans(log_ncount[,cellcondition$level2]),
+  rowMeans(log_ncount[,cellcondition$level3]),
+  rowMeans(log_ncount[,cellcondition$level4]))
 
 #### Redoing fig7d. What is down-regulated by PTMA?
 andid <- c(ensidPtma)#,toensid(c("Narf","Cdc45")))
@@ -509,25 +534,52 @@ b<-b[,c(listolaptmagenes7d$ensid, andid)]
 for(i in 1:ncol(b))
   b[,i] <- b[,i]/max(b[,i]) #normalize to highest level
 colnames(b) <- togenesym(colnames(b)) #order preserving? not any more!
-png("plots/ss2 olaprevtargets ptma.png",width = 1000,pointsize = 16)
+png("plots/ss2 olaprevtargets ptma byfacs.png",width = 1000,pointsize = 16)
 par(cex.lab=0.2)
 par(mfrow=c(1,1))
 barplot(b, main="Genes per PTMA facs level",
         col=c("#000000","#880000","#AA0000","#FF0000"), cex.names=0.5,beside=TRUE) 
 dev.off()
 
+################################# other way, by PTMA level
+
+genemeanperlevel <- cbind(
+  rowMeans(log_ncount[,cellcondition$isss & cellcondition$isgood & log_ncount[ensidPtma,]>3]),
+  rowMeans(log_ncount[,cellcondition$isss & cellcondition$isgood & log_ncount[ensidPtma,]<3]))
+
+#### Redoing fig7d. What is down-regulated by PTMA?
+andid <- c(ensidPtma)#,toensid(c("Narf","Cdc45")))
+b <- t(genemeanperlevel[
+  rownames(genemeanperlevel) %in% c(listolaptmagenes7d$ensid,andid),
+  c(1,2)])
+#use order as in olas paper. ola sorts by fold change
+b<-b[,c(listolaptmagenes7d$ensid, andid)] 
+# for(i in 1:ncol(b))
+#   b[,i] <- b[,i]/max(b[,i]) #normalize to highest level
+colnames(b) <- togenesym(colnames(b)) #order preserving? not any more!
+png("plots/ss2 olaprevtargets ptma byptma.png",width = 1000,pointsize = 16)
+par(cex.lab=0.2)
+par(mfrow=c(1,1))
+barplot(b, main="Genes per PTMA facs level",
+        col=c("#000000","#880000"), cex.names=0.5,beside=TRUE) 
+dev.off()
+
+
+######################
+
+
 #TODO so correlation not great by FACS level. but better to reproduce plot by Ptma level then?
 #TODO by ptma level. then by cherry level. just split into 4 bins. also only use SS?
 
 #can also sort each gene exp by Ptma level and make a dot-plot?
-dat2 <- ncount_all[,cellcondition$isgood & cellcondition$isss]
+dat2 <- ncount[,cellcondition$isgood & cellcondition$isss]
 dat2 <- dat2[,order(dat2[ensidPtma,])]
 plot(as.double(log1(dat2[listolaptmagenes7d$ensid[15],])))
 #2,10,15 very bimodal  ... this is actually much clearer this way than below? would have to fit a sigmoidal.
 #then two pieces of information; change in level and bimodality
 plot(
   as.double(log1(dat2[ensidPtma,])),
-  as.double(log1(dat2[listolaptmagenes7d$ensid[15],]))
+  as.double(log1(dat2[listolaptmagenes7d$ensid[9],]))
   )
 plot(
   as.double((dat2[ensidPtma,])),
@@ -550,7 +602,7 @@ nametogenesym <- function(x){
 #length(which(gene_mean_ss>=0.0001))
 takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood  & cellcondition$levelnum>1
 #takecells[weird ] <- FALSE
-cor_genes <- cor(t(ncount_all[gene_mean_ss>=0.00001 | rownames(ncount_all)==ensidPtma ,takecells]), method="spearman")  #olas way
+cor_genes <- cor(t(ncount[gene_mean_ss>=0.00001 | rownames(ncount)==ensidPtma ,takecells]), method="spearman")  #olas way
 cor_ptma <- cor_genes[rownames(cor_genes)==ensidPtma]
 names(cor_ptma) <- colnames(cor_genes)
 nametogenesym(sort(cor_ptma)[1:30])
@@ -570,63 +622,71 @@ plot(sort(cor_ptma,decreasing = TRUE))
 ######################################################################
 
 #Check some individual correlations
-plotcor <- function(x,y){
-  plot(x,y,cex.lab=1)
+plotcor <- function(x,y,xlab="",ylab=""){
+  plot(x,y,cex.lab=1,xlab=xlab, ylab=ylab)
   cor(x,y,method="spearman")
 }
 
-keepcells <- cellcondition$isss & gene_count>300e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$isss & cellcondition$isgood#>0
 #keepcells <- cellcondition$isss & cellcondition$levelnum>0
 #keepcells <- cellcondition$iscr & gene_count>1e3 & cellcondition$levelnum>0
 
-keepcells <- cellcondition$isss & gene_count>300e3 & cellcondition$levelnum>0
+#keepcells <- cellcondition$isss & gene_count>300e3 & cellcondition$levelnum>0
+
+#2c markers accornding to ola
+plot(log1(ncount[toensid("Fbxo15"),keepcells]), 
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+#Fbxo15 slightly more correlation
+#Rbm25  slightly more correlation
+#Dst    little correlation
+#
 
 #keap1 supposed to interact with ptma. there could be a trend. keap1+ptma = degrade Nrf2? meah?
-plot(log1(ncount_all[toensid("Nfe2l2"),keepcells]), #literature suggests interaction nfe2l2. https://en.wikipedia.org/wiki/NFE2L2
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(ncount_all[toensid("Nfe2l1"),keepcells]), 
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Nfe2l2"),keepcells]), #literature suggests interaction nfe2l2. https://en.wikipedia.org/wiki/NFE2L2
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Nfe2l1"),keepcells]), 
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 
-plot(log1(ncount_all[toensid("Myc"),keepcells]),  #ptma in all tissues with myc. but clearly also without myc. 
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Myc"),keepcells]),  #ptma in all tissues with myc. but clearly also without myc. 
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 #note: if Gm4617 correlates so well with ptma then it can be used as a proxy for the cr2 data too
 
 png("plots/ss2 ptma vs Gm9800.png",width = 800, height=600)
-plot(log1(ncount_all[toensid("Gm9800"),keepcells]),  #super correlated
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Gm9800"),keepcells]),  #super correlated
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
 png("plots/ss2 ptma vs Gm4617.png",width = 800, height=600)
-plot(log1(ncount_all[toensid("Gm4617"),keepcells]),  #super correlated. predicted homolog of ptma http://www.ihop-net.org/UniPub/iHOP/gs/123843.html
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Gm4617"),keepcells]),  #super correlated. predicted homolog of ptma http://www.ihop-net.org/UniPub/iHOP/gs/123843.html
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
-plot(log1(ncount_all[toensid("Ncl"),keepcells]), #https://en.wikipedia.org/wiki/Nucleolin  ribosomes
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(ncount_all[toensid("Erh"),keepcells]), #suggested to be in cell cycle. and other things
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Ncl"),keepcells]), #https://en.wikipedia.org/wiki/Nucleolin  ribosomes
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Erh"),keepcells]), #suggested to be in cell cycle. and other things
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 png("plots/ss2 ptma vs Pglyrp3.png",width = 800, height=600)
-plot(log1(ncount_all[toensid("Pglyrp3"),keepcells]),  #innate immune system. weak?
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Pglyrp3"),keepcells]),  #innate immune system. weak?
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
-plot(log1(ncount_all[toensid("Lmo3"),keepcells]),  #LIM domain something. weak?
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Lmo3"),keepcells]),  #LIM domain something. weak?
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
-plot(log1(ncount_all[toensid("Prdx1"),keepcells]),  #https://en.wikipedia.org/wiki/Peroxiredoxin_1  strong. after release, causes cytokines to be released
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Prdx1"),keepcells]),  #https://en.wikipedia.org/wiki/Peroxiredoxin_1  strong. after release, causes cytokines to be released
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
-plot(log1(colSums(ncount_all[grep("grna-ptma",rownames(ncount_all)),keepcells])),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1,xlim=c(0,1.5))
-plot(log1(ncount_all["grna-ptma2",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(colSums(ncount[grep("grna-ptma",rownames(ncount)),keepcells])),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1,xlim=c(0,1.5))
+plot(log1(ncount["grna-ptma2",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 
 
-plot(log1(ncount_all[toensid("Npm1"),keepcells]),  #
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Npm1"),keepcells]),  #
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
-plot(log1(ncount_all[toensid("Hsp90ab1"),keepcells]),  #came out of deseq strongly
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Hsp90ab1"),keepcells]),  #came out of deseq strongly
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 #TODO get all the articles on ptma
 
@@ -634,67 +694,67 @@ plot(log1(ncount_all[toensid("Hsp90ab1"),keepcells]),  #came out of deseq strong
 
 #ptma https://en.wikipedia.org/wiki/Thymosin_%CE%B11  - could it actually connect to pglyrp3
 
-plot(log1(ncount_all[toensid("Egr1"),keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Egr1"),keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 
-plot(log1(ncount_all[toensid("Ptp4a3"),keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Ptp4a3"),keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 
 ######################################################################
 ### Plot gene vs gene, mcherry & cas9 ################################
 ######################################################################
 
-keepcells <- cellcondition$isss & gene_count>300e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$isss & cellcondition$isgood
 
 # png("plots/ss2 ptma vs bfp.png",width = 800, height=600)
-# plot(log1(ncount_all["bfp",keepcells]),
-#      log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+# plot(log1(ncount["bfp",keepcells]),
+#      log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 # dev.off()
 png("plots/ss2 ptma vs mcherry.png",width = 800, height=600)
-plot(log1(ncount_all["mcherry",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount["mcherry",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
 png("plots/ss2 ptma vs cas9.png",width = 800, height=600)
-plot(log1(ncount_all["cas9",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount["cas9",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
 
 keepcells2 <- cellcondition$isss & gene_count>300e3 & cellcondition$levelnum>2
-plot(log1(ncount_all["cas9",keepcells2]),
-     log1(ncount_all[ensidPtma,keepcells2]),cex.lab=1)
+plot(log1(ncount["cas9",keepcells2]),
+     log1(ncount[ensidPtma,keepcells2]),cex.lab=1)
 
 #TODO a linear model with cas9 & mcherry vs ptma
 
 
 # png("plots/ss2 bfp vs cas9.png",width = 800, height=600)
-# plot(log1(ncount_all["bfp",keepcells]),
-#      log1(ncount_all["cas9",keepcells]),cex.lab=1)
+# plot(log1(ncount["bfp",keepcells]),
+#      log1(ncount["cas9",keepcells]),cex.lab=1)
 # dev.off()
 png("plots/ss2 mcherry vs cas9.png",width = 800, height=600)
-plot(log1(ncount_all["mcherry",keepcells]),
-     log1(ncount_all["cas9",keepcells]),cex.lab=1) #good correlation
+plot(log1(ncount["mcherry",keepcells]),
+     log1(ncount["cas9",keepcells]),cex.lab=1) #good correlation
 dev.off()
 
-plot(log1(ncount_all["bfp",]))
-plot(log1(ncount_all["mcherry",]))
+plot(log1(ncount["bfp",]))
+plot(log1(ncount["mcherry",]))
 
-plot(log1(ncount_all["cas9",keepcells]))
-#plot(log1(ncount_all["bfp",keepcells]))
-plot(log1(ncount_all["mcherry",keepcells]))
+plot(log1(ncount["cas9",keepcells]))
+#plot(log1(ncount["bfp",keepcells]))
+plot(log1(ncount["mcherry",keepcells]))
 
 #check correlation bfp, cas9 and read count!
 png("plots/ss2 cas9 vs readcount.png",width = 800, height=600)
-plot(log1(ncount_all["cas9",keepcells]),
+plot(log1(ncount["cas9",keepcells]),
      log1(gene_count[keepcells]),cex.lab=1)
 dev.off()
 png("plots/ss2 bfp vs readcount.png",width = 800, height=600)
-plot(log1(ncount_all["bfp",keepcells]),
+plot(log1(ncount["bfp",keepcells]),
      log1(gene_count[keepcells]),cex.lab=1)
 dev.off()
 png("plots/ss2 mcherry vs readcount.png",width = 800, height=600)
-plot(log1(ncount_all["mcherry",keepcells]),
+plot(log1(ncount["mcherry",keepcells]),
      log1(gene_count[keepcells]),cex.lab=1)
 dev.off()
 
@@ -704,69 +764,125 @@ dev.off()
 
 #####################################
 
-keepcells <- cellcondition$iscr & gene_count>10e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$iscr & cellcondition$isgood
+#keepcells <- cellcondition$iscr & gene_count>10e3 & cellcondition$levelnum>0
 length(which(keepcells))
 
 
 # png("plots/1kcr ptma vs bfp.png",width = 800, height=600)
-# plot(log1(ncount_all["bfp",keepcells]),
-#      log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+# plot(log1(ncount["bfp",keepcells]),
+#      log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 # dev.off()
 png("plots/1kcr ptma vs mcherry.png",width = 800, height=600)
-plot(log1(ncount_all["mcherry",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount["mcherry",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
 png("plots/1kcr ptma vs cas9.png",width = 800, height=600)
-plot(log1(ncount_all["cas9",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount["cas9",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 dev.off()
 
 ###############
 
-keepcells <- cellcondition$iscr & gene_count>20e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$iscr & cellcondition$isgood & log1(ncount[ensidPtma,])<6.5
+#keepcells <- cellcondition$iscr & gene_count>30e3 & cellcondition$isgood & log1(ncount[ensidPtma,])<6.5
+#keepcells <- cellcondition$iscr & gene_count>20e3 & cellcondition$levelnum>0
 #keepcells <- cellcondition$iscr & gene_count>200e3 & cellcondition$levelnum>0
 
-plot(log1(colSums(ncount_all[grep("grna-ptma",rownames(ncount_all)),keepcells])),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(colSums(ncount_all[grep("grna-ptma",rownames(ncount_all)),keepcells])) + log1(ncount_all["mcherry",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(ncount_all["grna-ptma3",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(ncount_all["mcherry",keepcells]),
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-##gRNA level is as good a predictor as mcherry for ptma KO. cells > 200k reads.
+png("plots/pairwise cr ptma vs grna.png",width = 800, height=600)
+plotcor(log1(colSums(ncount[grep("grna-ptma",rownames(ncount)),keepcells])),
+        log1(ncount[ensidPtma,keepcells]),xlab="log sum grna",ylab="ptma")
+dev.off()
+png("plots/pairwise cr ptma vs grna2.png",width = 800, height=600)
+plotcor(colSums(log(1+ncount[grep("grna-ptma",rownames(ncount)),keepcells])),
+        log1(ncount[ensidPtma,keepcells]),xlab="sum log grna",ylab="ptma")
+dev.off()
 
-plot(log1(ncount_all[toensid("Gm9800"),keepcells]),  #super correlated
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
-plot(log1(ncount_all[toensid("Gm4617"),keepcells]),  #super correlated. predicted homolog of ptma http://www.ihop-net.org/UniPub/iHOP/gs/123843.html
-     log1(ncount_all[ensidPtma,keepcells]),cex.lab=1)
+png("plots/pairwise cr ptma vs mcherry.png",width = 800, height=600)
+plotcor(log1(ncount["mcherry",keepcells]),
+        log1(ncount[ensidPtma,keepcells]),xlab="mcherry",ylab="ptma")
+dev.off()
+#NOTE: exp(2)=7x more mcherry reads. so this means it might be easier to sequence and hence better at predicting
 
-log_metaptma <- 
-  log1(ncount_all[toensid("Gm9800"),keepcells])*2 + 
-  log1(ncount_all[toensid("Gm4617"),keepcells])*2 +
-  log1(ncount_all[ensidPtma,keepcells])
+##gRNA level is as good a predictor as mcherry for ptmaKO. cells > 200k reads.
+
+plot(log1(colSums(ncount[grep("grna-ptma",rownames(ncount)),keepcells])) + log1(ncount["mcherry",keepcells]),
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+
+##All gRNAs are working .... no. wrong sign!
+for(i in 1:5){
+  png(sprintf("plots/pairwise cr ptma vs grna%s.png",i),width = 800, height=600)
+  plot(log1(ncount[sprintf("grna-ptma%s",i),keepcells]),
+       log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+  dev.off()
+}
+
+
+
+
+#TODO which grna is best predicting?
+
+plot(log1(ncount[toensid("Gm9800"),keepcells]),  #super correlated
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
+plot(log1(ncount[toensid("Gm4617"),keepcells]),  #super correlated. predicted homolog of ptma http://www.ihop-net.org/UniPub/iHOP/gs/123843.html
+     log1(ncount[ensidPtma,keepcells]),cex.lab=1)
 
 
 #grna and mcherry as good predictors for PTMA level. but only when detecting the grna
-plotcor(log1(colSums(ncount_all[grep("grna-ptma",rownames(ncount_all)),keepcells])), 
+plotcor(log1(colSums(ncount[grep("grna-ptma",rownames(ncount)),keepcells])), 
      log_metaptma)
-plotcor(log1(ncount_all["mcherry",keepcells]),
+plotcor(log1(ncount["mcherry",keepcells]),
      log_metaptma)
 
+
+
+#an attempt at a linear model.
+#but this is not quite the same as checking efficiency. does not take presence into account? or?
+#keepcells <- cellcondition$iscr & gene_count>40e3 & cellcondition$isgood & log1(ncount[ensidPtma,])<6.5
+keepcells <- cellcondition$isss & cellcondition$isgood 
+lmdata <- t(ncount[c(ensidPtma, sprintf("grna-ptma%s",1:5)),keepcells])
+lmdata <- log(1+lmdata)
+colnames(lmdata) <- c("ptma",sprintf("grna%s",1:5))
+mm <- lm(ptma ~ grna1 + grna2 + grna3 + grna4 + grna5 + 1, as.data.frame(lmdata))
+mm
+#annoyingly, it predicts better for the regular chemistry. likely because of the depth
+#could we up ptma somehow?
+#should divide by avg. amount of that grna
+
+
+# For SS2:
+# (Intercept)        grna1        grna2        grna3        grna4        grna5  
+# 4.21398      1.78168     -0.07129     -1.46118     -1.40669     -0.71584  
+
+sumgrna <- rowMeans(ncount[grep("grna-ptma",rownames(ncount)),cellcondition$isgood])
+mm$coefficients[-1]/sumgrna
+# grna1        grna2        grna3        grna4        grna5 
+# 2.874554281 -0.008420633 -0.079980112 -0.021562446 -0.141865644 
+# for ss2: normalized suggests grna5 strongest by factor 2x-7x. non-normalized, 3 and 4 strongest (2x of 5)
+#grna1 has so little that we cannot assess strength
+#note that model here is a bit messy, mixing log and non-log
 
 ######################################################################
 ### Plot heatmaps ####################################################
 ######################################################################
 
 #Plot a heatmap, show levels on top
-pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0){
+pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0,normalize=FALSE){
   #keepcells=cellcondition$levelnum>0
   #geneids <- listolaptmagenes7d$ensid
     
-  lcounts <- log_ncount_all
+  lcounts <- log_ncount
   selectgenes <- which(rownames(lcounts) %in% geneids)
   
   lcounts <- lcounts[selectgenes,keepcells]
+  if(normalize){
+    for(i in 1:nrow(lcounts)){
+      s <- max(lcounts[i,])
+      if(s==0) s<-1
+      lcounts[i,] <- lcounts[i,]/s
+    }
+  }
+
   rownames(lcounts) <- togenesym(rownames(lcounts))
   annotation_col <- data.frame(levelnum=factor(sprintf("level%s",cellcondition$levelnum[keepcells])))  
   #annotation_col
@@ -790,15 +906,23 @@ pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0){
 # cellcondition[listannoyingcells,]
 # cellcondition$isss[listannoyingcells]<-FALSE
 
-keepcells <- cellcondition$isss & gene_count>500e3 & cellcondition$isgood #cellcondition$levelnum>0
-keepcells <- cellcondition$iscr & gene_count>10e3 & cellcondition$levelnum>0
+keepcells <- cellcondition$isss & cellcondition$isgood #cellcondition$levelnum>0
+#keepcells <- cellcondition$iscr & cellcondition$isgood & cellcondition$levelnum>0
 
 pheatmapbylevel(c(ensidPtma,listolaptmagenes7d$ensid),keepcells)
+pdf("plots/heatmap pluripot ss.pdf")
 pheatmapbylevel(c(ensidPtma,listolapluripotency$ensid),keepcells)
+dev.off()
 
+pdf("plots/heatmap cellcycle ss.pdf")
 pheatmapbylevel(c(ensidPtma,listolacellcycle$ensid),keepcells)
+dev.off()
+
 pheatmapbylevel(c(listolacellcycle$ensid),keepcells)
-pheatmapbylevel(c(ensidPtma,listola2c$ensid),keepcells)
+
+pheatmapbylevel(c(ensidPtma,listola2c$ensid),keepcells,normalize = TRUE)
+pheatmapbylevel(c(listola2c$ensid),keepcells)
+
 #some really striking cells here for cell cycle!
 #listolapluripotency$ensid
 
@@ -811,9 +935,9 @@ pheatmapbylevel(c(ensidPtma,listola2c$ensid),keepcells)
 
 #what is a good way of keeping track of cell definitions?
 
-pheatmapcor <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all))){
+pheatmapcor <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount))){
   
-  lcounts <- log_ncount_all
+  lcounts <- log_ncount
   selectgenes <- which(rownames(lcounts) %in% geneids)
   lcounts <- lcounts[selectgenes,keepcells]
   rownames(lcounts) <- togenesym(rownames(lcounts))
@@ -850,10 +974,10 @@ pheatmapcor(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
 #cycles: 1ug: 
 
 
-runrtsne <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount_all)),perplexity=30,max_iter=1000){
+runrtsne <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount)),perplexity=30,max_iter=1000){
   #  geneids <- c(ensidPtma,listolacellcycle$ensid)
   #  keepcells <- cellcondition$isss & cellcondition$levelnum %in% c(1,4)
-  lcounts <- log_ncount_all
+  lcounts <- log_ncount
   selectgenes <- which(rownames(lcounts) %in% geneids)
   lcounts <- lcounts[selectgenes,keepcells]
   #rownames(lcounts) <- togenesym(rownames(lcounts))
@@ -888,24 +1012,38 @@ title("tSNE 2c",outer=TRUE)
 dev.off()
 #x<-runrtsne(c(listola2c$ensid),cellcondition$isgood, col=colorbychem())   #clearly separates by chemistry!
 
-x<-runrtsne(c(listola2c$ensid),cellcondition$isss, col=colorbygene("mcherry"),perplexity = 30)  
+#x<-runrtsne(c(listola2c$ensid),cellcondition$isss, col=colorbygene("mcherry"),perplexity = 30)  
 
 #lots of blue in one group. all PTMA downreg in one group. controls pluripotency!
 png("plots/tsne pluripot.png")
 par(mfrow=c(1,2))
 x<-runrtsne(c(listolapluripotency$ensid),cellcondition$isgood & cellcondition$isss)  
 plottsne(x,col=colorbygene(),"Ptma SS")
+plottsne(x,col=colorbymedia(),"Ptma SS")
 #plottsne(x,col=colorbygene("mcherry"),"mcherry SS")
 x<-runrtsne(c(listolapluripotency$ensid),cellcondition$isgood & cellcondition$iscr)
 plottsne(x,col=colorbygene(),"Ptma DogSeq")
 title("tSNE pluripotency",outer=TRUE)
 dev.off()
 
+png("plots/tsne 2c media.png")
+par(mfrow=c(1,1))
+x<-runrtsne(c(listola2c$ensid),cellcondition$isgood & cellcondition$isss)  
+plottsne(x,col=colorbymedia(),"Ptma SS 2c colored by media")
+dev.off()
+
+
 png("plots/tsne all pluripot.png") #TODO - separates by chemistry
 x<-runrtsne(c(listolapluripotency$ensid),cellcondition$isgood)  
-plottsne(x,col=colorbychem(),"Chemistry DogSeq")
+plottsne(x,col=colorbychem(),"Chemistry (pluripotency genes)")
 #x<-runrtsne(c(listolapluripotency$ensid),cellcondition$isgood, col=colorbychem())  
 dev.off()
+
+png("plots/tsne ss pluripot cond.png") #TODO - separates by chemistry
+x<-runrtsne(c(listolapluripotency$ensid),cellcondition$isgood & cellcondition$isss)  
+plottsne(x,col=colorbymedia(),"Growth condition (pluripotency genes)")
+dev.off()
+
 
 
 #lots of blue in one group
@@ -1000,14 +1138,14 @@ pheatmap(plateA,cluster_rows = FALSE, cluster_cols = FALSE, main = sprintf("DogS
 #we have enough data to show grna and mcherry correlation
 png("plots/cr20k mcherry vs total grna.png",w=800)
 keepcells <- cellcondition$iscr & gene_count>20e3 & cellcondition$levelnum>0
-plot(log1(ncount_all["mcherry",keepcells]), #good correlation but up to 10-100 fold difference
-     log1(colSums(ncount_all[grep("grna-",rownames(ncount_all)),keepcells])),cex.lab=1)
+plot(log1(ncount["mcherry",keepcells]), #good correlation but up to 10-100 fold difference
+     log1(colSums(ncount[grep("grna-",rownames(ncount)),keepcells])),cex.lab=1)
 dev.off()
 #cas9 vs bfp is crap. this is a T2A construct. how can correlation be so bad?? likewise in their droplet data?
 png("plots/cr20k bfp vs cas9.png",w=800)
 keepcells <- cellcondition$iscr & gene_count>20e3 & cellcondition$levelnum>0
-plot(log1(ncount_all["bfp",keepcells]), 
-     log1(ncount_all["cas9",keepcells]),cex.lab=1)
+plot(log1(ncount["bfp",keepcells]), 
+     log1(ncount["cas9",keepcells]),cex.lab=1)
 dev.off()
 
 
@@ -1029,9 +1167,9 @@ myfastt <- function(groupA, groupB, keepgene = gene_mean_ss>=0.00001){
   fac <- rep(0,ncol(dat))
   fac[groupA] <- 1
   fac[groupB] <- 2
-  tt <- log_ncount_all[keepgene,fac>0]
-  mean1<- rowMeans(log_ncount_all[keepgene,fac==1])
-  mean2<- rowMeans(log_ncount_all[keepgene,fac==2])
+  tt <- log_ncount[keepgene,fac>0]
+  mean1<- rowMeans(log_ncount[keepgene,fac==1])
+  mean2<- rowMeans(log_ncount[keepgene,fac==2])
   out <- rowttests(as.matrix(tt), factor(fac[fac>0]))
   #out[order(out$p.value),]
   out <- cbind(rownames(out),mean1,mean2,out)
@@ -1040,8 +1178,10 @@ myfastt <- function(groupA, groupB, keepgene = gene_mean_ss>=0.00001){
   colnames(out)[3] <- "mean2"
   sqldf("select * from out natural join ensconvert")
 }
-orderttest <- function(out) out[order(out$p.value),]
-
+orderttest <- function(out, pcutoff=1) {
+  out<-out[order(out$p.value),]
+  out[out$p.value<pcutoff,]
+}
 ## differences between levels of grna (from facs)
 t2vs4 <- myfastt(
   cellcondition$levelnum==2 & cellcondition$isgood & cellcondition$isss,
@@ -1075,20 +1215,20 @@ orderttest(tfeeder2)[1:40,] #
 
 
 
-#what is the cut-off high and low Ptma? not obvious. can be at 1. or up to 2-3
-hist(as.double(log_ncount_all[ensidPtma,]))
+#what is the cut-off high and low Ptma? not obvious. can be at 1. or up to 2-3. likely 3-4
+hist(as.double(log_ncount[ensidPtma,]))
 
 #Compare ptma low/high
 tlowhiPtma <- myfastt(
-  log_ncount_all[ensidPtma,]<3  & cellcondition$isgood & cellcondition$isss,
-  log_ncount_all[ensidPtma,]>4  & cellcondition$isgood & cellcondition$isss)  #was cut off 1, for all mito
+  log_ncount[ensidPtma,]<3  & cellcondition$isgood & cellcondition$isss,
+  log_ncount[ensidPtma,]>4  & cellcondition$isgood & cellcondition$isss)  #was cut off 1, for all mito
 orderttest(tlowhiPtma)[1:100,]
 
 
 
 # tlowhiPtmaNowt <- myfastt(
-#   log_ncount_all[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1,
-#   log_ncount_all[ensidPtma,]>=1 & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1)
+#   log_ncount[ensidPtma,]<1  & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1,
+#   log_ncount[ensidPtma,]>=1 & cellcondition$isgood & cellcondition$isss & cellcondition$levelnum>1)
 # orderttest(tlowhiPtmaNowt)[1:100,]
 
 
@@ -1100,6 +1240,12 @@ write.table(tlowhiPtma$ensembl_gene_id[1:200], file="gotest_lowhiptma.csv")
 
 #mean(out$mean1)
 
+#x<-mytopgosym(listolacellcycle$genesym)
+
+go_lowhiptma<-stopgosym(orderttest(tlowhiPtma)[1:100,7])
+go_lowhiptma
+
+orderttest(tlowhiPtma,1e-9)
 
 
 ######################################################################
@@ -1109,20 +1255,20 @@ write.table(tlowhiPtma$ensembl_gene_id[1:200], file="gotest_lowhiptma.csv")
 ## heterogenous, all cells (SS)
 keepAll <- cellcondition$isgood & cellcondition$isss 
 tnAll <- fitTechnicalNoise(
-  ncount_all[,keepAll],
+  ncount[,keepAll],
   fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
-hetAll  <- getVariableGenes(fit_type = 'log',ncount_all[,keepAll], tnAll$fit, plot=TRUE)
+hetAll  <- getVariableGenes(fit_type = 'log',ncount[,keepAll], tnAll$fit, plot=TRUE)
 
 ## heterogenious, Ptma + and -
-keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount_all[ensidPtma,]<3
-keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount_all[ensidPtma,]>4  
-# keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount_all["mcherry",]<2
-# keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount_all["mcherry",]>3
+keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount[ensidPtma,]<3
+keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount[ensidPtma,]>4  
+# keepLow  <- cellcondition$isgood & cellcondition$isss & log_ncount["mcherry",]<2
+# keepHigh <- cellcondition$isgood & cellcondition$isss & log_ncount["mcherry",]>3
 tnPtmaLow <- fitTechnicalNoise(
-  ncount_all[,keepLow],
+  ncount[,keepLow],
   fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
 tnPtmaHigh <- fitTechnicalNoise(
-  ncount_all[,keepHigh],
+  ncount[,keepHigh],
   fit_type = 'log', use_ERCC = FALSE, plot=FALSE) 
 
 #Customized, only makes sense for log
@@ -1133,20 +1279,33 @@ getVariableGenes2 <- function(nCountsEndo, fit, method = "fit", threshold = 0.1,
   score = fit$opts$offset * coefficients(fit)["a"] * 10^(-coefficients(fit)["k"] * LmeansEndo)
   is_het = score < Lcv2Endo & LmeansEndo > fit$opts$minmean
   ret = score
-  ret[!is_het] <- -1
+  ret[!is_het] <- 10000
   ret
 }
 
 
-hetPtmaLow  <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount_all[,keepLow],  tnPtmaLow$fit, plot=FALSE)
-hetPtmaHigh <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount_all[,keepHigh], tnPtmaHigh$fit, plot=FALSE)
+hetPtmaLow  <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount[,keepLow],  tnPtmaLow$fit, plot=FALSE)
+hetPtmaHigh <- getVariableGenes2(fit_type = 'log',threshold=0.2, ncount[,keepHigh], tnPtmaHigh$fit, plot=FALSE)
 
-length(which(hetPtmaLow>=0))
-length(which(hetPtmaHigh>=0))
-diffHet <- hetPtmaHigh[hetPtmaHigh>=0 & hetPtmaLow<0]
+length(which(hetPtmaLow<1))
+length(which(hetPtmaHigh<1))
+diffHet <- hetPtmaHigh[hetPtmaHigh<1 & hetPtmaLow>1]
 length(diffHet)
-diffHet <- diffHet[order(diffHet)]
-data.frame(sym=togenesym(names(diffHet)[1:100]),score=diffHet[1:100])
+#diffHetLog <- log(hetPtmaHigh) - log(hetPtmaLow)  #
+
+hetdf <- function(diffHet, n=100){
+  diffHet <- diffHet[order(diffHet)]
+  diffHet <- diffHet[diffHet>=0]
+  data.frame(sym=togenesym(names(diffHet)[1:n]),score=diffHet[1:n],me=gene_mean_ss[names(diffHet)[1:n]])
+}
+hetdf(hetPtmaLow)
+hetdf(hetPtmaHigh)
+hetdf(diffHet)
+
+length(which(gene_mean_ss>0.00001))
+
+#hetdf(diffHetLog) #method does not work well
+
 
 ######################################################################
 ### gRNA counts ######################################################
@@ -1155,10 +1314,10 @@ data.frame(sym=togenesym(names(diffHet)[1:100]),score=diffHet[1:100])
 #TODO check again, which grna molecules do we have? can we look at the promoter in more detail?
 
 ### what are the relative fractions of different gRNAs? Here for smartseq
-#grnatotc <- rowMeans(ncount_all[grep("grna-ptma",rownames(ncount_all)),cellcondition$iss & cellcondition$isgood])
-#grnabg <- mean(rowMeans(ncount_all[setdiff(grep("grna-",rownames(ncount_all)),grep("grna-ptma",rownames(ncount_all))),]))
-plotgrnapie <- function(ncount_all){
-  grnatotc <- rowMeans(ncount_all[grep("grna-ptma",rownames(ncount_all)),])
+#grnatotc <- rowMeans(ncount[grep("grna-ptma",rownames(ncount)),cellcondition$iss & cellcondition$isgood])
+#grnabg <- mean(rowMeans(ncount[setdiff(grep("grna-",rownames(ncount)),grep("grna-ptma",rownames(ncount))),]))
+plotgrnapie <- function(ncount){
+  grnatotc <- rowMeans(ncount[grep("grna-ptma",rownames(ncount)),])
   grnatotc <- grnatotc/sum(grnatotc)
 #  png("plots/grna-ptmafraction SS2.png",w=800)
   #barplot(grnatotc, main="PTMA gRNA fractions", cex.names=0.5,beside=TRUE) 
@@ -1166,10 +1325,10 @@ plotgrnapie <- function(ncount_all){
  # dev.off()
   grnatotc
 }
-png("plots/grna-ptmafraction pie.png",w=800)
+png("plots/grnaptmafraction pie.png",w=800)
 par(mfrow=c(1,2),oma=c(0,0,2,0))
-plotgrnapie(ncount_all[,cellcondition$isss & cellcondition$isgood])
-plotgrnapie(ncount_all[,cellcondition$iscr & cellcondition$isgood])
+plotgrnapie(ncount[,cellcondition$isss & cellcondition$isgood])
+plotgrnapie(ncount[,cellcondition$iscr & cellcondition$isgood])
 title("Overall gRNA presence ss2 vs DogSeq",outer=TRUE)
 dev.off()
 
@@ -1178,14 +1337,14 @@ dev.off()
 
 # i<-2
 # par(mfrow=c(1,2))
-# plot(sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",i),rownames(ncount_all)),cellcondition$isss & cellcondition$isgood])))
-# plot(sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",i),rownames(ncount_all)),cellcondition$iscr & cellcondition$isgood])))
+# plot(sort(as.double(log_ncount[grep(sprintf("grna-ptma%s",i),rownames(ncount)),cellcondition$isss & cellcondition$isgood])))
+# plot(sort(as.double(log_ncount[grep(sprintf("grna-ptma%s",i),rownames(ncount)),cellcondition$iscr & cellcondition$isgood])))
 
 #### Compare the dynamic range of gRNA detection
-plotsortgrna <- function(log_ncount_all){
-  out <- sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",1),rownames(ncount_all)),]))
+plotsortgrna <- function(log_ncount){
+  out <- sort(as.double(log_ncount[grep(sprintf("grna-ptma%s",1),rownames(ncount)),]))
   for(i in 2:5){
-    out <- cbind(out,sort(as.double(log_ncount_all[grep(sprintf("grna-ptma%s",i),rownames(ncount_all)),])))
+    out <- cbind(out,sort(as.double(log_ncount[grep(sprintf("grna-ptma%s",i),rownames(ncount)),])))
   }  
   cols=c("black","red","green","blue","gray")
   plot(out[,1],type="l",ylim=c(0,max(out)),xlab="cell",ylab="log relative gRNA counts")
@@ -1195,8 +1354,8 @@ plotsortgrna <- function(log_ncount_all){
 }
 png("plots/grna dynamic range.png",w=800)
 par(mfrow=c(1,2),oma=c(0,0,2,0))
-plotsortgrna(log_ncount_all[,cellcondition$isss & cellcondition$isgood])
-plotsortgrna(log_ncount_all[,cellcondition$iscr & cellcondition$isgood])
+plotsortgrna(log_ncount[,cellcondition$isss & cellcondition$isgood])
+plotsortgrna(log_ncount[,cellcondition$iscr & cellcondition$isgood])
 title("Dynamic range ss2 vs DogSeq",outer=TRUE)
 dev.off()
 
@@ -1207,9 +1366,9 @@ dev.off()
 ######################################################################
 
 #or constrain by mcherry! 
-takecells_ko <- log_ncount_all[ensidPtma,]<4  & cellcondition$isgood & cellcondition$isss
-takecells_wt <- log_ncount_all[ensidPtma,]>=3 & cellcondition$isgood & cellcondition$isss
-takecells_all <- log_ncount_all[ensidPtma,]>1 & cellcondition$isgood & cellcondition$isss
+takecells_ko <- log_ncount[ensidPtma,]<3.5  & cellcondition$isgood & cellcondition$isss
+takecells_wt <- log_ncount[ensidPtma,]>=3.5 & cellcondition$isgood & cellcondition$isss
+takecells_all <- log_ncount[ensidPtma,]>1 & cellcondition$isgood & cellcondition$isss
 
 # takecells_wt <- cellcondition$levelnum %in% c(3,4) & cellcondition$isss & cellcondition$isgood 
 # takecells_ko <- cellcondition$levelnum %in% c(1,2) & cellcondition$isss & cellcondition$isgood 
@@ -1217,9 +1376,9 @@ takecells_all <- log_ncount_all[ensidPtma,]>1 & cellcondition$isgood & cellcondi
 # takecells_wt <- cellcondition$levelnum %in% c(3,4) & cellcondition$isss & cellcondition$isgood 
 # takecells_ko <- cellcondition$levelnum %in% c(1,2) & cellcondition$isss & cellcondition$isgood 
 # takecells_all <- cellcondition$levelnum %in% c(1,2) & cellcondition$isss & cellcondition$isgood 
-cor_wt <- cor(t(ncount_all[gene_mean_ss>=0.001 ,takecells_wt]), method="spearman")  
-cor_ko <- cor(t(ncount_all[gene_mean_ss>=0.001 ,takecells_ko]), method="spearman") 
-cor_all <- cor(t(ncount_all[gene_mean_ss>=0.001 ,takecells_all]), method="spearman") 
+cor_wt <- cor(t(ncount[gene_mean_ss>=0.001 ,takecells_wt]), method="spearman")  
+cor_ko <- cor(t(ncount[gene_mean_ss>=0.001 ,takecells_ko]), method="spearman") 
+cor_all <- cor(t(ncount[gene_mean_ss>=0.001 ,takecells_all]), method="spearman") 
 cor_wt <- melt(cor_wt)
 cor_ko <- melt(cor_ko)
 cor_all <- melt(cor_all)
@@ -1256,13 +1415,19 @@ plot(cor_diff$value)
 
 #malat1 is a lncrna regulating splicing, located in nuclear specles http://onlinelibrary.wiley.com/doi/10.15252/embj.201592655/full  
 
-downstreamPtma <- tlowhiPtma$ensembl_gene_id[which(tlowhiPtma$p.value<1e-50)]
+#TOO get rid of Gm9800 and Gm4617
+
+downstreamPtma <- tlowhiPtma$ensembl_gene_id[which(tlowhiPtma$p.value<1e-10)]
+downstreamPtma
 length(downstreamPtma)
+
 col <- rep("black",nrow(cor_diff))
 col[cor_diff$Var1 %in% downstreamPtma | cor_diff$Var2 %in% downstreamPtma] <- "red"
 col[cor_diff$Var1 %in% listola2c$ensid | cor_diff$Var2 %in% listola2c$ensid] <- "red"
 col[cor_diff$Var1 %in% listolapluripotency$ensid | cor_diff$Var2 %in% listolapluripotency$ensid] <- "red"
 plot(cor_diff$value, col=col,cex=0.5)
+
+#instead of cor, highly varying genes in mcherry or ptma +? not quite the same but...
 
 #things in high correlation with Ptma 
 #cor_wt
@@ -1275,13 +1440,13 @@ plot(cor_diff$value, col=col,cex=0.5)
 
 
 plotcor2 <- function(gene1,gene2,n1="g1",n2="g2"){
-  takecells_ko <- log_ncount_all[ensidPtma,]<2  & cellcondition$isgood & cellcondition$isss
-  takecells_wt <- log_ncount_all[ensidPtma,]>=3 & cellcondition$isgood & cellcondition$isss
+  takecells_ko <- log_ncount[ensidPtma,]<2  & cellcondition$isgood & cellcondition$isss
+  takecells_wt <- log_ncount[ensidPtma,]>=3 & cellcondition$isgood & cellcondition$isss
   par(mfrow=c(1,2))
-  plot(log1(ncount_all[gene1,takecells_wt]),
-       log1(ncount_all[gene2,takecells_wt]),cex.lab=1,xlab=n1,ylab=n2)
-  plot(log1(ncount_all[gene1,takecells_ko]),
-       log1(ncount_all[gene2,takecells_ko]),cex.lab=1,xlab=n1,ylab=n2)
+  plot(log1(ncount[gene1,takecells_wt]),
+       log1(ncount[gene2,takecells_wt]),cex.lab=1,xlab=n1,ylab=n2)
+  plot(log1(ncount[gene1,takecells_ko]),
+       log1(ncount[gene2,takecells_ko]),cex.lab=1,xlab=n1,ylab=n2)
   print(length(which()))
   #cor(x,y,method="spearman")
 }
@@ -1316,75 +1481,105 @@ for(i in (-20:0)+nrow(cor_diff)){
 
 
 mm.pairs <- readRDS(system.file("exdata", "mouse_cycle_markers.rds", package="scran"))
-assignmentsLow  <- cyclone(as.matrix(ncount_all[,ncount_all[ensidPtma,]<2  & cellcondition$isgood & cellcondition$isss]),mm.pairs)
-assignmentsHigh <- cyclone(as.matrix(ncount_all[,ncount_all[ensidPtma,]>3  & cellcondition$isgood & cellcondition$isss]),mm.pairs)
+# assignmentsLow  <- cyclone(as.matrix(ncount[,ncount[ensidPtma,]<3.5  & cellcondition$isgood & cellcondition$isss]),mm.pairs)
+# assignmentsHigh <- cyclone(as.matrix(ncount[,ncount[ensidPtma,]>3.5  & cellcondition$isgood & cellcondition$isss]),mm.pairs)
+#PTMA 2 and 3 - original cut-offs
+cycass <- cyclone(as.matrix(ncount),mm.pairs)
 
-plotphase <- function(assignments){
-  col <- character(length(assignments$phases))
-  col[assignments$phases=="G1"] <- "red"
-  col[assignments$phases=="G2M"] <- "blue"
-  col[assignments$phases=="S"] <- "darkgreen"
-  #plot(assignments$score$G1, assignments$score$G2M, col=col, pch=16)
+plotphase <- function(phases){
   cnt <- c(
-    length(which(assignments$phases=="G1")),
-    length(which(assignments$phases=="G2M")),
-    length(which(assignments$phases=="S"))
+    length(which(phases=="G1")),
+    length(which(phases=="G2M")),
+    length(which(phases=="S"))
   )
   pie(cnt,labels=c("G1","G2M","S"))
   
   #could sort and make a heatmap too?
+  cnt
 }
 
 #more cells in S-phase with PTMA high
 png("plots/cycstage ptma.png",width=800)
 par(mfrow=c(1,2))
-plotphase(assignmentsLow)
-plotphase(assignmentsHigh)
+# plotphase(assignmentsLow$phases)  #difference huge at minimum to ptma 3.5
+# plotphase(assignmentsHigh$phases)  
+plotphase(cycass$phases[ncount[ensidPtma,]<3.5  & cellcondition$isgood & cellcondition$isss])
+plotphase(cycass$phases[ncount[ensidPtma,]>3.5  & cellcondition$isgood & cellcondition$isss])
 dev.off()
 
 #get some measure of speed
 #higher if ptma high. so ptma high means less cycling
-mean(apply(assignmentsLow$normalized.scores,1,max)) 
-mean(apply(assignmentsHigh$normalized.scores,1,max))   #higher confidence here
+# mean(apply(assignmentsLow$normalized.scores,1,max)) 
+# mean(apply(assignmentsHigh$normalized.scores,1,max))   #higher confidence here
 #TODO continous measure
 
 #S score vs PTMA level?
-keepcells <- cellcondition$isgood & cellcondition$isss
-assignmentsAll <- cyclone(as.matrix(ncount_all[,keepcells]),mm.pairs)
-png("plots/phase ptma vs S.png")
-plot(assignmentsAll$normalized.scores$S,
-     log1(ncount_all[ensidPtma,keepcells]))
-dev.off()
-png("plots/phase ptma vs G2M.png")
-plot(assignmentsAll$normalized.scores$G2M,
-     log1(ncount_all[ensidPtma,keepcells]))
-dev.off()
-png("plots/phase ptma vs G1.png")
-plot(assignmentsAll$normalized.scores$G1,
-     log1(ncount_all[ensidPtma,keepcells]))
-dev.off()
+# png("plots/phase ptma vs S.png")
+# plot(cycass$normalized.scores$S,
+#      log1(ncount[ensidPtma,keepcells]))
+# dev.off()
+# png("plots/phase ptma vs G2M.png")
+# plot(cycass$normalized.scores$G2M,
+#      log1(ncount[ensidPtma,keepcells]))
+# dev.off()
+# png("plots/phase ptma vs G1.png")
+# plot(cycass$normalized.scores$G1,
+#      log1(ncount[ensidPtma,keepcells]))
+# dev.off()
 
 #S and G2M scores lower in general for low PTMA. suggests faster cycling when PTMA low. again
 #If S phase longer, does that mean high PTMA keep cells in synthesis? all ribosomal genes higher with high ptma.
 #would this not suggest a shorter synth phase? unless the cell is struggling to up synthesis so proteins are not higher.
 #or they are high but nothing happens
 
-#Clearly, faster cycling with high Ptma!!!
+keepcells <- cellcondition$isgood & cellcondition$isss
+
+#Cell cycling does not seem to change anymore
 png("plots/phase avscore sorted by PTMA.png", width=800)
-#plot(apply(assignmentsAll$scores,1,mean)[order(ncount_all[ensidPtma,keepcells])])
-plot(as.double(log_ncount_all[ensidPtma,keepcells]),
-     apply(assignmentsAll$scores,1,mean),xlab="Ptma",ylab="Average cell cycling score")
+par(mfrow=c(1,1))
+avscore <- apply(cycass$scores[keepcells,],1,mean)[order(ncount[ensidPtma,keepcells])]
+k<-60
+avscoreroll <- rollmean(avscore,k)
+plot(avscore,ylab="Average cell cycling score",pch=16,col="green")
+lines((1:length(avscoreroll)+k/2),avscoreroll,col="blue")
 dev.off()
 
 #Would be nice to sort by Ptma level, then show the 3 classifications
 #G1 vs G2M, color coded by Ptma. Black circles mainly in the mid=S
 png("plots/phase G1 vs G2M colored by PTMA.png", width=800)
-plot(assignmentsAll$normalized.scores$G1,
-     assignmentsAll$normalized.scores$G2M, col=colorbygene()[keepcells])
+col<-rep("black",ncol(ncount))
+col[ncount[ensidPtma,]>median(ncount[ensidPtma,keepcells])] <- "green"
+plot(cycass$normalized.scores$G1[keepcells],
+     cycass$normalized.scores$G2M[keepcells], col=col, pch=16,cex=.5,xlab="G1",ylab="G2M")
 dev.off()
 
-
-
+#Continous diagram of cell cycle stage vs ptma level
+plotphaseimage <- function(k=4){
+  o<-order(ncount[ensidPtma,keepcells])
+  v <- cycass$normalized.scores[keepcells,][o,]
+  #base <- cumsum(rep(0.2,))
+  #plot(cumsum(v$G1),type="l",ylim=c(0,200))  
+  #lines(cumsum(v$G2M),col="red")
+  #lines(cumsum(v$S),col="green")
+  #print(dim(v))
+  v <- cbind(
+    rollmean(v[,1],k),
+    rollmean(v[,2],k),
+    rollmean(v[,3],k))
+  m <- matrix(3,nrow=nrow(v),ncol=100)
+  for(i in 1:nrow(v)){
+    cut1<-round(v[i,1]*100) #G1
+    cut2<-round((v[i,1]+v[i,3])*100) #G2M
+    m[i,1:cut1]<-1
+    m[i,cut1:cut2]<-2
+  }
+  image(1:nrow(m),1:ncol(m),m,col=c("#000000","#FF0000","#0000FF"),xlab="Cell index (smoothened)",ylab="G1/G2M/S  Log(Ptma)")
+}
+png("plots/phase image vs Ptma.png", width=800)
+plotphaseimage(8)
+lval <- sort(log(1+ncount[ensidPtma,keepcells]))
+lines(lval*100/max(lval),col="yellow")
+dev.off()
 
 ######################################################################
 ### DEseq model testing NOT USED ##############################################
@@ -1400,7 +1595,7 @@ calcrnacondition <- function(){
   rownames(avglevel) <- c(sprintf("meanptma%s",1:5),"meancas9")
   for(i in 1:4){
     for(j in 1:length(forgenes)){
-      avglevel[j,i] <- mean(as.double(ncount_all[which(rownames(ncount_all)==forgenes[j]),cellcondition$iscr & cellcondition$levelnum==i]))
+      avglevel[j,i] <- mean(as.double(ncount[which(rownames(ncount)==forgenes[j]),cellcondition$iscr & cellcondition$levelnum==i]))
       cellcondition$iscr 
     }
   }
@@ -1419,9 +1614,9 @@ calcrnacondition <- function(){
   colnames(avgforcell) <- c(rownames(avglevel),"meanptma")
   
   #extract grna levels as conditions. use the normalized levels!
-  cellconditiongrna <- t(ncount_all[
-    c(which(rownames(ncount_all) %in% sprintf("grna-ptma%s",1:5)),
-      which(rownames(ncount_all) %in% c("cas9"))),])
+  cellconditiongrna <- t(ncount[
+    c(which(rownames(ncount) %in% sprintf("grna-ptma%s",1:5)),
+      which(rownames(ncount) %in% c("cas9"))),])
   colnames(cellconditiongrna) <- c(sprintf("ptma%s",1:5),"cas9")
   cellconditiongrna <- cbind(cellcondition,cellconditiongrna, avgforcell) 
   #head(cellconditiongrna)
@@ -1508,7 +1703,7 @@ resOrdered <- res[order(res$padj),]
 
 geneids <- listolapluripotency$ensid
 keepcells <- cellcondition$isss & cellcondition$levelnum %in% c(1,4)
-lcounts <- log_ncount_all
+lcounts <- log_ncount
 selectgenes <- which(rownames(lcounts) %in% geneids)
 lcounts <- lcounts[selectgenes,keepcells]
 
