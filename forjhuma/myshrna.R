@@ -1,5 +1,5 @@
 ######################################################################
-##### this is for the final 3 hiseq
+##### jhuma, my own shrna
 ######################################################################
 
 #also need system libraries: libssl. libcurl?
@@ -30,6 +30,8 @@ library(sqldf)
 #library(topGO)
 library(limma)
 
+library(scLVM)
+
 ######################################################################
 ### Load data ########################################################
 ######################################################################
@@ -40,7 +42,7 @@ listnongenes <- c(
 
 # read normal gene counts
 readcounttablejhuma <- function(){
-  dat <- read.csv("counts/henriksson_jhuma20161222.csv",stringsAsFactors=FALSE)
+  dat <- read.csv("../counts/henriksson_jhuma20161222.csv",stringsAsFactors=FALSE)
   rownames(dat) <- dat[,1]
   dat <- dat[,-1]
   rownames(dat)[which(rownames(dat)=="CAS9")] <- "cas9"
@@ -139,6 +141,33 @@ cellcondition$isgood[gene_count<1e6] <- FALSE
 plot(mt_prop)
 
 
+
+
+
+runrtsne <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount)),perplexity=30,max_iter=1000){
+  #  geneids <- c(ensidPtma,listolacellcycle$ensid)
+  #  keepcells <- cellcondition$isss & cellcondition$levelnum %in% c(1,4)
+  lcounts <- log_ncount
+  selectgenes <- which(rownames(lcounts) %in% geneids)
+  lcounts <- lcounts[selectgenes,keepcells]
+  #rownames(lcounts) <- togenesym(rownames(lcounts))
+  
+  d <- stats::dist(t(as.matrix(lcounts)))
+  set.seed(0) # tsne has some stochastic steps (gradient descent) so need to set random 
+  rtsne_out <- Rtsne(d,is_distance = TRUE, perplexity=perplexity, verbose = FALSE, max_iter=max_iter)
+  
+  #function to color by gene exp? ptma? grna? read count?
+  
+  # https://hms-dbmi.github.io/scw/analysis-of-heterogeneity-and-subpopulations.html
+  rtsne_out$keepcells<-keepcells
+  rtsne_out 
+}
+plottsne<-function(rtsne_out,col=colorbylevel(),title=""){
+  plot(rtsne_out$Y, col=col[rtsne_out$keepcells], pch=16, main='',xlab=title,ylab="")
+  #  plot(rtsne_out$Y, col=col[keepcells], pch=16, main='')
+}
+
+
 ######################################################################
 ### DE analysis #####################################################
 ######################################################################
@@ -158,23 +187,30 @@ mynormalize <- function(dat){
   #print(sfnew)
   dat
 }
-ncount_all <- mynormalize(dat)
-ncount_all <- ncount_all[-which(rownames(ncount_all) %in% listnongenes),]
-log_ncount_all <- log(1+ncount_all)
+ncount <- mynormalize(dat)
+ncount <- ncount[-which(rownames(ncount) %in% listnongenes),]
+log_ncount <- log(1+ncount)
 
 
 mybatchremove <- function(dat){
-  dat <- log_ncount_all
+  dat <- log_ncount
   tokeep <- cellcondition$isgood
   sf <- removeBatchEffect(dat[,tokeep], cellcondition$mouse[tokeep])
   sfnew <- dat
   sfnew[,(1:ncol(dat))[tokeep]]<-sf
   sfnew
 }
-log_newncount <- mybatchremove(log_ncount_all)
-#removeBatchEffect(ncount_all, cellcondition$mouse)
+log_newncount <- mybatchremove(log_ncount)
+#removeBatchEffect(ncount, cellcondition$mouse)
 
 
+no0mean <- function(x) mean(x[x!=0])
+
+cellcondition$isgood[ncount[ensidXbp1,]==0]<-FALSE
+
+cellcondition$isgood[colSums(dat)<1e3]<-FALSE   #TODO be even stricter?
+
+#cellcondition$isgood[]
 
 
 #make plates
@@ -182,18 +218,53 @@ makeplatejhuma <- function(inp){
   inp <- as.double(inp)
   rbind(inp[1:13], inp[14:26], inp[27:39])
 }
-barplot(makeplatejhuma(ncount_all[ensidXbp1,])/mean(as.double(ncount_all[ensidXbp1,])),beside=TRUE)
 
-  ncount_all[ensidXbp1,cellcondition$gene=="Xbp1" & cellcondition$mouse==1]
-  ncount_all[ensidXbp1,cellcondition$gene=="ctrl" & cellcondition$mouse==1]
+#########################################
+#Show individual xbp1 levels
+png("plots/myshrna xbp bars.png",width=800)
+p <- makeplatejhuma(ncount[ensidXbp1,])#/mean(as.double(ncount[ensidXbp1,]))
+colnames(p) <- cellcondition$gene[1:13]
+p <- p[,colnames(p)%in%c("ctrl","Xbp1")]
+barplot(p,beside=TRUE)
+barplot(p[2,],beside=TRUE)
+barplot(apply(p,2,no0mean),beside=TRUE)
+dev.off()
+
+
+
+
+#########################################
+#Show individual xbp1 levels
+png("plots/myshrna ern bars.png",width=800)
+p <- makeplatejhuma(ncount[ensidErn1,])#/mean(as.double(ncount[ensidXbp1,]))
+colnames(p) <- cellcondition$gene[1:13]
+p <- p[,colnames(p)%in%c("ctrl","Ern1")]
+barplot(p,beside=TRUE)
+barplot(p[1,],beside=TRUE)
+barplot(apply(p,2,no0mean),beside=TRUE)
+dev.off()
+
+ cellcondition$platenum %in% c(9,10)
+ 
+ 
+
+#Compare vs ctrl
+no0mean(ncount[ensidXbp1,cellcondition$gene=="Xbp1" & cellcondition$isgood])
+no0mean(ncount[ensidXbp1,cellcondition$gene=="ctrl" & cellcondition$isgood])
+
+no0mean(ncount[ensidErn1,cellcondition$gene=="Ern1" & cellcondition$isgood])
+no0mean(ncount[ensidErn1,cellcondition$gene=="ctrl" & cellcondition$isgood])
+
+  ncount[ensidXbp1,cellcondition$gene=="Xbp1" & cellcondition$mouse==1]
+  ncount[ensidXbp1,cellcondition$gene=="ctrl" & cellcondition$mouse==1]
   
 
-  ncount_all[ensidXbp1,cellcondition$gene=="Xbp1" & cellcondition$mouse==3]
-  ncount_all[ensidXbp1,cellcondition$gene=="ctrl" & cellcondition$mouse==3]
+  ncount[ensidXbp1,cellcondition$gene=="Xbp1" & cellcondition$mouse==3]
+  ncount[ensidXbp1,cellcondition$gene=="ctrl" & cellcondition$mouse==3]
 
 mid<-3
-ncount_all[ensidErn1,cellcondition$gene=="Ern1" & cellcondition$mouse==mid]
-ncount_all[ensidErn1,cellcondition$gene=="ctrl" & cellcondition$mouse==mid]
+ncount[ensidErn1,cellcondition$gene=="Ern1" & cellcondition$mouse==mid]
+ncount[ensidErn1,cellcondition$gene=="ctrl" & cellcondition$mouse==mid]
 
 
     
@@ -218,7 +289,7 @@ colorbymouse <- function(){
 
 ### PCA
 #dopca <- function(){
-  the_gene_mean <- rowMeans(ncount_all[,cellcondition$isgood])
+  the_gene_mean <- rowMeans(ncount[,cellcondition$isgood])
   the_gene_mean <- the_gene_mean/sum(the_gene_mean)
   
   length(which(the_gene_mean>=0.00001))
@@ -226,7 +297,7 @@ colorbymouse <- function(){
   takecells <- cellcondition$isgood  & cellcondition$gene %in% c("ctrl","Xbp1")
   takecells <- cellcondition$isgood  & cellcondition$gene %in% c("ctrl","Ern1")
  
-  # cor_ncount <- cor(log_ncount_all[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
+  # cor_ncount <- cor(log_ncount[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
   cor_ncount <- cor(log_newncount[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
   
   
@@ -248,8 +319,12 @@ colorbymouse <- function(){
 
 takecells <- cellcondition$isgood #& cellcondition$mouse==1   # %in% c(1) #cellcondition$isss #& !cellcondition$iswt 
 geneids <- rownames(dat)[the_gene_mean>=0.00001]
-runrtsne(geneids, takecells,colorbyjhumagene(),4)
-runrtsne(geneids, takecells,colorbymouse(),4)
+x<-runrtsne(geneids, takecells,4)
+plottsne(x,colorbyjhumagene())
+plottsne(x,colorbymouse())
+#runrtsne <- function(geneids, keepcells=rep(TRUE,ncol(log_ncount)),perplexity=30,max_iter=1000){
+  
+#runrtsne(geneids, takecells,colorbymouse(),4)
 
 
 
