@@ -138,18 +138,19 @@ getplatedesign20161209 <- function(){
   isgood[theplate==12]<-TRUE
   genelay <- as.matrix(read.csv("layouttcelltest.csv",stringsAsFactors=FALSE))
   genelay <- cbind(genelay,genelay,genelay,rep("f",8),rep("f",8),rep("f",8),rep("f",8)) #not really true
-  mouserep <- c(1,1,1,2,2,2,3,3,3,0,0)
-  for(i in 1:3)
-    mouserep <- rbind(mouserep,mouserep)
+  mouserep <- c(1,1,1,2,2,2,3,3,3,0,0,0)  #TODO was changed
+#  for(i in 1:3)
+#    mouserep <- rbind(mouserep,mouserep)
   ko <- rep("",length(thecols))
-  mouse <- rep("",length(thecols))
+  mouse <- rep(0,length(thecols))
   for(i in 1:length(thecols))  {
     if(theplate[i]==12){
       ko[i] <- genelay[therows[i],thecols[i]]
       mouse[i] <- mouserep[thecols[i]]
     }
   }
-
+## TODO end change
+  
   ### Batch groups for limma
   batchgroup <- rep(0,ncol(dat))
   batchgroup[theplate==1] <- 1
