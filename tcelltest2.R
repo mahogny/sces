@@ -53,6 +53,27 @@ cellcondition$ko[d(328,331)]
 which(cellcondition$ko=="Ern1")
 
 
+th_fastt <- function(groupA, groupB, keepgene = gene_mean_ss>=0.00001){
+  fac <- rep(0,ncol(dat))
+  fac[groupA] <- 1
+  fac[groupB] <- 2
+  tt <- th_ncount[keepgene,fac>0]
+  mean1<- rowMeans(log_ncount[keepgene,fac==1])
+  mean2<- rowMeans(log_ncount[keepgene,fac==2])
+  out <- rowttests(as.matrix(tt), factor(fac[fac>0]))
+  #out[order(out$p.value),]
+  out <- cbind(rownames(out),mean1,mean2,out)
+  colnames(out)[1] <- "ensembl_gene_id"
+  colnames(out)[2] <- "mean1"
+  colnames(out)[3] <- "mean2"
+  sqldf("select * from out natural join ensconvert")
+}
+# orderttest <- function(out, pcutoff=1) {
+#   out<-out[order(out$p.value),]
+#   out[out$p.value<pcutoff,]
+# }
+
+
 thcompare2 <- function(indexCheck, indexC=which(cellcondition$ko=="Thy1control" & cellcondition$isgood)){
   datfordeseq  <- dat[grep("ENSMUSG",rownames(dat)),]
   keepcells <- 1:ncol(dat) %in% c(indexC,indexCheck)
@@ -385,4 +406,21 @@ dev.off()
 
 
 thsne2(20,dims=3)
+
+th_readcount <- rowMeans(dat[tcellgenes,cellcondition$plate==12])
+plot(sort(as.double(th_readcount)))
+
+togenesymnames(sort(th_readcount))
+
+
+mean(colSums(dat[,cellcondition$plate==12]))
+4e6*0.75/40e3 #75x more reads
+
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==1]))
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==3]))
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==4]))
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==7]))
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==8]))
+mean(colSums(dat[,cellcondition$plate==12 & cellcondition$col==9]))
+
 
