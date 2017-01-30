@@ -5,19 +5,24 @@
 #also need system libraries: libssl. libcurl?
 installdeps <- function(){
   install.packages(c("gplots","scatterplot3d","plotrix","sqldf","Matrix","pi0"))
+  install.packages(c("cluster", "codetools", "foreign", "lattice", "Matrix", "mgcv", "survival"))
+  
   install.packages("tsne")
-  install.packages("gProfileR")
   install.packages("Rtsne")
+  install.packages("gProfileR")
   install.packages("rPython")  #python-dev
+  install.packages("pheatmap")
+  
   source("https://bioconductor.org/biocLite.R")
-  biocLite(c("biomaRt","DESeq","DEseq2"))
-  biocLite(c("monocle"))
+  biocLite(c("biomaRt","DESeq"))
+  biocLite(c("DESeq2"))
   biocLite(c("genefilter"))
+  #biocLite(c("monocle"))
   #biocLite("topGO")
+  biocLite("org.Mm.eg.db")
   biocLite("limma")
   biocLite("scater")
   biocLite("scran")
-  biocLite("org.Mm.eg.db")
   #mintlinux package: the mesa stuff. libx. freetype. python-pip python-dev
   #run: pip install scipy
 }
@@ -25,12 +30,12 @@ installdeps <- function(){
 library(rgl)
 library(gProfileR)
 library(RColorBrewer)
-library(monocle)
+#library(monocle)
 library(Rtsne)
 library(tsne)
 library(pheatmap)
 library(DESeq2)
-library(DESeq) #really need both?
+library(DESeq)
 library(plyr)
 library(biomaRt)
 library(gplots)
@@ -39,7 +44,7 @@ library(plotrix)
 library(Matrix)
 library(sqldf)
 library(genefilter)
-library(topGO)
+#library(topGO)
 library(org.Mm.eg.db)
 library(limma)
 library(stringr)
@@ -70,7 +75,7 @@ readcounttable20161209one <- function(f){
   rownames(dat)[which(rownames(dat)=="grna-Ptma-F-3")] <- "grna-ptma3"
   rownames(dat)[which(rownames(dat)=="grna-Ptma-F-4")] <- "grna-ptma4"
   rownames(dat)[which(rownames(dat)=="grna-Ptma-F-5")] <- "grna-ptma5"
-
+  
   dat
 }
 readcounttable20161209 <- function(){
@@ -132,15 +137,14 @@ getplatedesign20161209 <- function(){
   iscr <- theplate %in% c(4, 8, 9,10)
   isss <- theplate %in% c(1,2,3,  5,6,7)
   #isth <- theplate %in% c(12)
-
+  
+  
   
   ##th KO
   isgood[theplate==12]<-TRUE
   genelay <- as.matrix(read.csv("layouttcelltest.csv",stringsAsFactors=FALSE))
   genelay <- cbind(genelay,genelay,genelay,rep("f",8),rep("f",8),rep("f",8),rep("f",8)) #not really true
-  mouserep <- c(1,1,1,2,2,2,3,3,3,0,0,0)  #TODO was changed
-#  for(i in 1:3)
-#    mouserep <- rbind(mouserep,mouserep)
+  mouserep <- c(1,1,1,2,2,2,3,3,3,0,0,0)  
   ko <- rep("",length(thecols))
   mouse <- rep(0,length(thecols))
   for(i in 1:length(thecols))  {
@@ -149,7 +153,6 @@ getplatedesign20161209 <- function(){
       mouse[i] <- mouserep[thecols[i]]
     }
   }
-## TODO end change
   
   ### Batch groups for limma
   batchgroup <- rep(0,ncol(dat))
@@ -170,11 +173,11 @@ getplatedesign20161209 <- function(){
   batchgroup[theplate==8 & thecols>=6] <- 23
   batchgroup[theplate==9] <- 24
   batchgroup[theplate==10] <- 25
-
+  
   fromseq <- c(rep(1,384),rep(2,384),rep(3,384)) 
   
-
-    
+  
+  
   isfeeder <- rep(FALSE,ncol(dat))
   isfeeder[theplate %in% c(1,2,3,4,5,6,7,8,9,10) & thecols<=6 & isgood] <- TRUE
   isfeeder[theplate %in% c(1) & isgood] <- TRUE
@@ -295,8 +298,14 @@ toensid <- function(geneid){
 
 ensidPtma <- toensid("Ptma")#ensconvert$ensembl_gene_id[which(ensconvert$mgi_symbol=="Ptma")]
 
-togenesymnames<-function(x){
+nametogenesym<-function(x){
   names(x)<-togenesym(names(x))
+  x
+}
+
+mtogenesym<-function(x){
+  colnames(x)<-togenesym(colnames(x))
+  rownames(x)<-togenesym(rownames(x))
   x
 }
 
@@ -339,7 +348,7 @@ stopgosym <- function(genelist,bg=unique(ensconvert$mgi_symbol)){
 }
 #mytopgo(rownames(ncount),orderttest(tlowhiPtma)[1:100,7],ID="genename")
 
-  
+
 
 ######################################################################
 ### Read olas data ###################################################
@@ -365,7 +374,6 @@ listolacellcycle <- read.csv("ola_cell_cycle_fig_genenames.csv",sep="\t",strings
 colnames(listolacellcycle) <- c("ensid","genesym")
 listola2c <- read.csv("ola_2C_genes_subset.csv",sep="\t",stringsAsFactors = FALSE)[,c(1,2)]
 colnames(listola2c) <- c("ensid","genesym")
-
 
 listkedarcellcycle <- 
   rbind(cbind(read.table("kedar_g1.txt",sep="\t",stringsAsFactors = FALSE)[,1],"G1"),
@@ -475,8 +483,8 @@ dopca <- function(){
   
   length(which(gene_mean_ss>=0.00001))
   #cor_ncount <- cor(ncount[gene_mean_ss>=0.00001,], method="spearman")
-#  takecells <- cellcondition$plate %in% c(1) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
-#  takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
+  #  takecells <- cellcondition$plate %in% c(1) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
+  #  takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood #& !cellcondition$iswt 
   takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood &cellcondition$isfeeder  #& !cellcondition$iswt 
   takecells <- cellcondition$plate %in% c(1) & cellcondition$isss & cellcondition$isgood &cellcondition$isfeeder  #& !cellcondition$iswt 
   
@@ -488,7 +496,7 @@ dopca <- function(){
   par(cex.axis=1.5, cex.lab=1.5)
   plot(pca$x[,3], pca$x[,2], pch=20, col=colorbylevel()[takecells], xlab="PC", ylab="PC")
   plot(pca$x[,1], pca$x[,2], pch=20, col=colorbyplate()[takecells], xlab="PC", ylab="PC")
-#  weird <- (1:ncol(dat))[takecells][pca$x[,1]>2]
+  #  weird <- (1:ncol(dat))[takecells][pca$x[,1]>2]
   #dev.off()
 }
 
@@ -511,7 +519,7 @@ dopca2 <- function(){
   length(which(the_gene_mean>=0.00001))
   #cor_ncount <- cor(ncount[gene_mean_ss>=0.00001,], method="spearman")
   takecells <- cellcondition$isss & cellcondition$isgood  # %in% c(1) #cellcondition$isss #& !cellcondition$iswt 
-#  cor_ncount <- cor(ncount[gene_mean_ss>=0.000001 ,takecells], method="spearman")  #olas way
+  #  cor_ncount <- cor(ncount[gene_mean_ss>=0.000001 ,takecells], method="spearman")  #olas way
   cor_ncount <- cor(log_ncount[the_gene_mean>=0.00001 ,takecells], method="spearman")  #better?
   #cor_ncount <- t(ncount[gene_mean_ss>=0.00001 ,takecells])  #ola does not scale
   pca <- prcomp(cor_ncount, scale=FALSE)
@@ -529,7 +537,7 @@ dopca2 <- function(){
   
   g1<-log_ncount[ ,takecells][,clust$cluster==1]
   g2<-log_ncount[ ,takecells][,clust$cluster==2]
-
+  
   df <- data.frame(p.value=rep(666,nrow(log_ncount)), x=rep(1,nrow(log_ncount)), y=rep(1,nrow(log_ncount)))
   for(i in (1:nrow(log_ncount))[the_gene_mean>=0.001]){
     t <- t.test(g1[i,],g2[i,])
@@ -537,7 +545,7 @@ dopca2 <- function(){
     df[i,2] <- t$estimate[1]
     df[i,3] <- t$estimate[2]
   }
-#  df<-data.frame(pval=outt,fold=outf)  
+  #  df<-data.frame(pval=outt,fold=outf)  
   rownames(df)<-rownames(log_ncount)
   df <- df[order(df$p.value,decreasing = FALSE),]
   df[1:50,]
@@ -641,7 +649,7 @@ plot(as.double(log1(dat2[listolaptmagenes7d$ensid[15],])))
 plot(
   as.double(log1(dat2[ensidPtma,])),
   as.double(log1(dat2[listolaptmagenes7d$ensid[9],]))
-  )
+)
 plot(
   as.double((dat2[ensidPtma,])),
   as.double(log1(dat2[listolaptmagenes7d$ensid[15],]))
@@ -656,10 +664,6 @@ plot(
 
 
 ### Pull out genes correlated with Ptma - by correlation
-nametogenesym <- function(x){
-  names(x) <- togenesym(names(x))
-  x
-}
 ##length(which(gene_mean_ss>=0.0001))
 #takecells <- cellcondition$plate %in% c(1,2,3) & cellcondition$isss & cellcondition$isgood  & cellcondition$levelnum>1
 takecells <- cellcondition$isss & cellcondition$isgood & log_ncount["cas9",]>3
@@ -724,10 +728,12 @@ plotcor <- function(x,y,xlab="",ylab=""){
   cor(x,y,method="spearman")
 }
 
-pgoneptma <- function(gene){
+pgoneptma <- function(gene,ref="Ptma"){
   gid <- toensid(gene)[1]
+  gid2 <- toensid(ref)[1]
   plot(log1(ncount[gid,keepcells]),
-       log1(ncount[ensidPtma,keepcells]),cex.lab=1,xlab=gene,ylab="Ptma")
+       log1(ncount[gid2,keepcells]),cex.lab=1,xlab=gene,ylab=ref)
+  cor(log1(ncount[gid,keepcells]),log1(ncount[gid2,keepcells]),method="spearman")
 }
 
 
@@ -1015,6 +1021,28 @@ pgoneptmasave("Edc3") #negative correlation
 pgoneptmasave("Usp47")
 pgoneptmasave("Glp2r") #no expression??
 
+par(mfrow=c(1,1))
+pgoneptma("Trp53") #there is a positive correlation but only up to a limit. 
+#Ptma can change a lot without Trp53 changing. but Trp53 low only in low Ptma
+pgoneptma("Glb1") #there is a negative correlation. why is glib1 used more?
+pgoneptma("Cdkn1a") #extremely strong correlation
+pgoneptma("Mir302a") #and b,c,d - none. if anything then at high Ptma levels. actually, would we see it?
+pgoneptma("Casp3") #Possible negative correlation but weak if so
+
+pgoneptma("Cdc20") #maybe weak correlation
+pgoneptma("Mad2l2") #neither L1 or L2 affected. mitotic arrest spnidle checkpoint
+pgoneptma("Lif") #maybe weak negative correlation. not very expressed
+pgoneptma("Stat3") #no idea
+pgoneptma("Nanog") #positive correlation?
+pgoneptma("")
+#Bates S, Phillips AC, Clark PA, Stott F, Peters G, Ludwig RL, Vousden KH (September 1998). "p14ARF links the tumour suppressors RB and p53". Nature. 395 (6698): 124–5. doi:10.1038/25867. PMID 9744267.
+pgoneptma("Cdkn1a","Trp53") #There is correlation, but not as strong as Cdkn1a-Ptma
+pgoneptma("Cdkn2a") #There is correlation, but not as strong as Cdkn1a-Ptma
+
+
+#
+#
+#
 
 ######################################################################
 ### Plot gene vs gene, mcherry & cas9 ################################
@@ -1156,9 +1184,9 @@ plot(log1(ncount[toensid("Gm4617"),keepcells]),  #super correlated. predicted ho
 
 #grna and mcherry as good predictors for PTMA level. but only when detecting the grna
 plotcor(log1(colSums(ncount[grep("grna-ptma",rownames(ncount)),keepcells])), 
-     log_metaptma)
+        log_metaptma)
 plotcor(log1(ncount["mcherry",keepcells]),
-     log_metaptma)
+        log_metaptma)
 
 
 
@@ -1289,7 +1317,7 @@ hetPtmaHigh[hetPtmaHigh<1000]
 pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0,normalize=FALSE){
   #keepcells=cellcondition$levelnum>0
   #geneids <- listolaptmagenes7d$ensid
-    
+  
   lcounts <- log_ncount
   selectgenes <- which(rownames(lcounts) %in% geneids)
   
@@ -1301,7 +1329,7 @@ pheatmapbylevel <- function(geneids, keepcells=cellcondition$levelnum>0,normaliz
       lcounts[i,] <- lcounts[i,]/s
     }
   }
-
+  
   rownames(lcounts) <- togenesym(rownames(lcounts))
   annotation_col <- data.frame(levelnum=factor(sprintf("level%s",cellcondition$levelnum[keepcells])))  
   #annotation_col
@@ -1324,7 +1352,10 @@ pheatmapbygene <- function(geneids, keepcells=cellcondition$levelnum>0,normalize
   lcounts <- log_ncount
   selectgenes <- which(rownames(lcounts) %in% geneids)
   
+  
+  
   lcounts <- lcounts[selectgenes,keepcells]
+#  lcounts <- lcounts[selectgenes,keepcells]
   if(normalize){
     for(i in 1:nrow(lcounts)){
       s <- max(lcounts[i,])
@@ -1333,12 +1364,30 @@ pheatmapbygene <- function(geneids, keepcells=cellcondition$levelnum>0,normalize
     }
   }
   
+  gcolor = rep("#FFFFFF",nrow(ncount))
+  gcolor[rownames(ncount) %in% listolapluripotency$ensid] <- "#000000"
+  gcolor[rownames(ncount) %in% listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="G1"]] <- "#000000"
+  gcolor[rownames(ncount) %in% listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="G2M"]] <- "#FF0000"
+  gcolor[rownames(ncount) %in% listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="S"]] <- "#0000FF"
+  gcolor <- gcolor[selectgenes]
+  
   cols <- greenred(100)
   rownames(lcounts) <- togenesym(rownames(lcounts))
   v<-log_ncount[byid,keepcells]
-  scolor <- cols[ceiling(100*v/max(v))]  #rgb(0, v/max(v), 0, maxColorValue=1)
+  #  print(length(v))
+  # print(ncol(lcounts))
+  ind<-ceiling(100*v/max(v))
+  ind[ind==0]<-1
+  scolor <- cols[ind]  #rgb(0, v/max(v), 0, maxColorValue=1)
+  #  print(ceiling(100*v/max(v)))
+  # print(scolor)
+  
+  w <- log_ncount[byid,keepcells]
+  rord <- (1:ncol(lcounts))[order(w)]
 
-  heatmap.2(lcounts,trace="none",col=cols, ColSideColors = scolor, density.info="none", labCol = FALSE)
+  heatmap.2(lcounts[,rord],trace="none",col=cols, RowSideColors = gcolor, ColSideColors = scolor[rord], density.info="none", 
+           labCol = FALSE, Colv=FALSE)
+#  heatmap.2(lcounts,trace="none",col=cols, RowSideColors = gcolor, ColSideColors = scolor, density.info="none", labCol = FALSE)
 }
 
 
@@ -1355,26 +1404,87 @@ keepcells <- cellcondition$isss & cellcondition$isgood #cellcondition$levelnum>0
 
 pheatmapbylevel(c(ensidPtma,listolaptmagenes7d$ensid),keepcells)
 png("plots/heatmap pluripot ss.png",width=800)
-pheatmapbygene(c(listolapluripotency$ensid),keepcells)
+keepcells <- cellcondition$isss & cellcondition$isgood & log_ncount["mcherry",]>3
+clu <- pheatmapbygene(c(listolapluripotency$ensid),keepcells)
+listjohanpluri <- c(labels(clu$rowDendrogram[[1]]),labels(clu$rowDendrogram[[2]][[2]]))
 dev.off()
+listnopluri <- labels(clu$colDendrogram[[2]][[1]][[2]])
+listnopluri <- c(573,632,571,440,655,276,275,570,181)
+#listnopluri <- (1:ncol(ncount))[keepcells][c(573,632,571,440,655,276,275,570,181)]
+listnopluri <- (1:ncol(ncount)) %in% listnopluri
+
+
+
+png("plots/heatmap johan pluripot ss.png",width=800)
+keepcells <- cellcondition$isss & cellcondition$isgood & log_ncount["mcherry",]>4
+pheatmapbygene(c(ensidPtma,toensid(listjohanpluri)),keepcells)
+listjohanpluri <- c(labels(clu$rowDendrogram[[1]]),labels(clu$rowDendrogram[[2]][[2]]))
+dev.off()
+#A broader group by Peg3a, Tuba1a, Cldn6
+#these group seems the opposite:
+#c("Tpm1","Cnn2","Tubb6","Glipr2") vs c("Tdh","Nanog","Tfcp2l1","Gdf3")
+
+keepcells <- cellcondition$isss & cellcondition$isgood #& log_ncount["mcherry",]>4
+tc<-mtogenesym(cor(t(log_ncount[c(ensidPtma,toensid(listjohanpluri2)),keepcells]),method="spearman"))
+heatmap.2(tc,trace="none",density.info="none",col=greenred(200))
+
+
 
 png("plots/heatmap 2c ss.png",width=800)
 pheatmapbygene(c(listola2c$ensid),keepcells)
 dev.off()
 
 #pheatmapbylevel(c(names(which(hetAll))),keepcells)
-
+############## cell cycling
 png("plots/heatmap cellcycle ola ss.png",width=800)
 #pheatmapbylevel(c(ensidPtma,listolacellcycle$ensid),keepcells)
 pheatmapbygene(c(listolacellcycle$ensid),keepcells,normalize = TRUE)
 dev.off()
 
-png("plots/heatmap cellcycle kedar ss.png",width=800)
-pheatmapbygene(c(listkedarcellcycle$ensid),keepcells,normalize = TRUE)
+png("plots/heatmap cellcycle kedar ss.png",width=1600)
+clu<-pheatmapbygene(c(listkedarcellcycle$ensid),keepcells,normalize = TRUE,byid = toensid("Cdkn1a"))
+listjohancc <- c(labels(clu$rowDendrogram[[1]][[1]]))
+
+listnocc <- c(labels(clu$colDendrogram[[1]][[1]]))
+listnocc <- c(275,455,662,482,655,276,607)
+listnocc <- (1:ncol(ncount)) %in% listnocc
+clu<-pheatmapbygene(c(listkedarcellcycle$ensid),listnocc,normalize = TRUE,byid = toensid("Cdk7"))
+pheatmapbygene(toensid(labels(clu$rowDendrogram)),listnocc,normalize = TRUE,byid = toensid("Cdkn1a"))
+sort(labels(clu$rowDendrogram[[1]]))
+#Cdk7 low <-> most cc genes low
+#but Cdkn1a low in the noncyc cells. and varying otherwise
 # pheatmapbygene(c(listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="S"]),keepcells,normalize = TRUE)
 # pheatmapbygene(c(listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="G2M"]),keepcells,normalize = TRUE)
 # pheatmapbygene(c(listkedarcellcycle$ensid[listkedarcellcycle$cellstage=="G1"]),keepcells,normalize = TRUE)
+
+clu<-pheatmapbygene(c(toensid(labels(clu$rowDendrogram[[2]][[2]]))),keepcells,normalize = TRUE)
+labels(clu$colDendrogram[[1]])
+listnocc2 <- c(16,127,519,455,662,655,482,607,276)
 dev.off()
+
+pdf("plots/heatmap johan pluri.pdf")
+pheatmapbygene(toensid(listjohanpluri),keepcells,normalize = TRUE,byid = toensid("Ptma"))
+dev.off()
+
+
+pdf("plots/heatmap reduced.pdf")
+clu<-pheatmapbygene(toensid(c(listjohancc,listjohanpluri)),keepcells,normalize = TRUE,byid = toensid("Ptma"))
+dev.off()
+
+#Check: pluripot vs cell cycle
+pheatmapbygene(c(listolapluripotency$ensid),listnopluri)
+clu<-pheatmapbygene(c(listolapluripotency$ensid),listnocc) #some pluripot left
+pheatmapbygene(c(listolapluripotency$ensid),listnocc2) #no pluripot
+pheatmapbygene(c(listkedarcellcycle$ensid),listnopluri) #no cycling
+#no pluripotency => also no cell cycle markers
+#TODO the second weaker group in pluripot?
+labels(clu$rowDendrogram[[2]])
+#these are the genes that still are enabled in some cells for nocc. nanog gives up first
+# [1] "Spp1"    "Slc2a1"  "Upp1"    "Slc2a3"  "Sall4"   "Dstn"    "Wbp5"    "Bex1"   
+# [9] "Dnmt3l"  "Fbxo15"  "Zfp42"   "Jarid2"  "Gdf3"    "Klf2"    "Sox2"    "Tdgf1"  
+# [17] "Pfkp"    "Tet1"    "Tdh"     "Fgf4"    "Esrrb"   "Tfcp2l1" "Utf1"    "Pou5f1" 
+
+#Could do MST from cycling to non-cycling. use these cells as reference for the path
 
 pheatmapbygene(c(listola2c$ensid),keepcells,normalize = TRUE)
 
@@ -1459,7 +1569,7 @@ plottsne<-function(rtsne_out,col=colorbylevel(),title="",labels=NULL){
   if(!is.null(labels)){
     text(rtsne_out$Y, labels=labels)
   }
-#  plot(rtsne_out$Y, col=col[keepcells], pch=16, main='')
+  #  plot(rtsne_out$Y, col=col[keepcells], pch=16, main='')
 }
 
 #runrtsne(c(ensidPtma,listolacellcycle$ensid),cellcondition$isss)
@@ -1569,7 +1679,7 @@ makeplate <- function(inp, platei){
 #plateA <- makeplate(colSums(dat[grep("grna-",rownames(dat)),]), 1)
 #plateB <- makeplate(colSums(dat[grep("grna-ptma",rownames(dat)),]), 8)
 
-        
+
 #color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList))
 
 #pheatmap(plateA,cluster_rows = FALSE, cluster_cols = FALSE, main = "DogSeq: gRNA count")
@@ -1741,10 +1851,10 @@ orderttest(tlowhiPtma,1e-9)
 plotgrnapie <- function(ncount){
   grnatotc <- rowMeans(ncount[grep("grna-ptma",rownames(ncount)),])
   grnatotc <- grnatotc/sum(grnatotc)
-#  png("plots/grna-ptmafraction SS2.png",w=800)
+  #  png("plots/grna-ptmafraction SS2.png",w=800)
   #barplot(grnatotc, main="PTMA gRNA fractions", cex.names=0.5,beside=TRUE) 
   pie(grnatotc, labels = paste(paste(sprintf("grna-%s",1:5),round(grnatotc*100)),"%",sep=""),cex=1)
- # dev.off()
+  # dev.off()
   grnatotc
 }
 plotgrnabar <- function(ncount){
@@ -1752,8 +1862,8 @@ plotgrnabar <- function(ncount){
   grnatotc <- grnatotc/sum(grnatotc)
   names(grnatotc) <- paste(paste(sprintf("grna-%s",1:5),round(grnatotc*100)),"%",sep="")
   barplot(grnatotc, main="", cex.names=0.5,beside=TRUE) 
-#  pie(grnatotc, labels = paste(paste(sprintf("grna-%s",1:5),round(grnatotc*100)),"%",sep=""),cex=1)
-#  grnatotc
+  #  pie(grnatotc, labels = paste(paste(sprintf("grna-%s",1:5),round(grnatotc*100)),"%",sep=""),cex=1)
+  #  grnatotc
 }
 png("plots/grnaptmafraction pie.png",w=800)
 par(mfrow=c(1,2),oma=c(0,0,2,0))
@@ -2005,7 +2115,7 @@ plot(cycass$normalized.scores$G1[keepcells],
 dev.off()
 
 #Continous diagram of cell cycle stage vs ptma level
-plotphaseimage <- function(k=4){
+plotphaseimage <- function(k=4,orderby=ensidPtma){
   o<-order(ncount[ensidPtma,keepcells])
   v <- cycass$normalized.scores[keepcells,][o,]
   #base <- cumsum(rep(0.2,))
@@ -2248,10 +2358,13 @@ dim(Ycorr)
 
 var_mean = apply(var_filtered,2,mean)
 colors = c('Green','Blue','Gray')
-pie(var_mean, , col = colors)
+#pie(var_mean, , col = colors)
 
 
 #################################################################
 
 
 
+
+write.table(ncount,"counts/forkedar_ncount.csv")
+write.table(cellcondition,"counts/forkedar_condition.csv")

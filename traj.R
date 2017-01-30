@@ -34,7 +34,7 @@ dopca <- function(){
   
   
   #and mcherry
-         
+  
   #olas way
   cor_ncount <- cor(ncount[takegene ,takecells], method="spearman")  #olas way
   pca_cor <- prcomp(cor_ncount, scale=FALSE)
@@ -46,10 +46,11 @@ dopca <- function(){
   
   pca <- pca_nolog
   pca <- pca_log
-#  pca <- cor_ncount <-   #normal way
+  #  pca <- cor_ncount <-   #normal way
   
   
-  pdf("plots/traj1.pdf")
+#  pdf("plots/traj1.pdf")
+  png("plots/traj1.png",w=800)
   par(cex.axis=1.5, cex.lab=1.5)
   col<-colorbygene()
   col<-colorbycc()
@@ -57,10 +58,11 @@ dopca <- function(){
   summary(factor(col[takecells]))
   #length(pca$x[,1])
   
-  plot3d(pca$x[,1], pca$x[,2], pca$x[,3], col=col[takecells], type="s", radius=0.4, size=10)
   plot(pca$x[,1], pca$x[,2], pch=20, col=col[takecells], xlab="PC", ylab="PC")
   dev.off()
-
+  
+  plot3d(pca$x[,1], pca$x[,2], pca$x[,3], col=col[takecells], type="s", radius=0.4, size=10)
+  
 }
 
 
@@ -152,4 +154,37 @@ stopgosym(togenesym(names(tail(difflist,n=100))))
 #DEseq on smaller quantiles
 
 #markers for apoptosis. GO!
+
+#p22/Cdkn1a is a Cdk1/2/4/6 inhibitor
+#also senescence marker 
+
+#growth arrest can cause differentiation. do we see this?
+
+#Ink4a (p16) is a marker for senescence
+#β-galactosidase but at pH 6!
+#http://www.aging-us.com/article/XFECL8coa6th4i87b/text
+#p16 = Cdkn2a. not really expressed except in a few
+#it is a Cdk4 inhibitor
+
+#https://en.wikipedia.org/wiki/Senescence-associated_beta-galactosidase
+#this is how you test senescence
+#Glb1
+
+# SASP, but also the constitutive presence of signs 
+# of DNA damage response, constitutive elevation of p21 and p53, etc. [34–36]. 
+#p21=Cdkn1a
+#Trp53 is p53
+
+#
+#https://en.wikipedia.org/wiki/P21  / Cdkn1a
+#should really know all about this one
+
+#KO of p53 leads to delayed differentiation. and overexpressed to earlier
+#miR-302a, miR-302b, miR-302c, and miR-302d ?
+
+
+
+#########################
+#
+#
 
